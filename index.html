@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gyro Racer 3D - Edición Brave</title>
+    <title>Gyro Racer 3D - Ultimate Compatibility</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -20,16 +20,17 @@
             font-family: 'Courier New', Courier, monospace; pointer-events: none;
             text-shadow: 2px 2px #000; z-index: 50;
         }
-        .sensor-val { font-size: 0.7rem; color: #888; }
         #debug-panel {
             position: absolute; bottom: 10px; right: 10px; 
-            background: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px;
-            font-size: 10px; color: #ff0; pointer-events: none;
+            background: rgba(0,0,0,0.7); padding: 8px; border-radius: 8px;
+            font-size: 11px; color: #fff; pointer-events: none; border: 1px solid #444;
         }
-        .warning-box {
-            background: #4a1a1a; border: 1px solid #ff4444; 
-            padding: 15px; border-radius: 10px; margin-top: 20px; display: none;
+        .warning-step { background: rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; margin-bottom: 8px; text-align: left; width: 100%; }
+        #touch-controls {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 50%;
+            display: none; z-index: 40;
         }
+        .touch-zone { width: 50%; height: 100%; float: left; opacity: 0.1; background: white; }
     </style>
 </head>
 <body>
@@ -39,156 +40,179 @@
         <div class="text-xl">PUNTOS: <span id="score-ui">0</span></div>
     </div>
 
+    <!-- Controles táctiles de emergencia si el sensor falla -->
+    <div id="touch-controls">
+        <div class="touch-zone" id="touch-left"></div>
+        <div class="touch-zone" id="touch-right"></div>
+    </div>
+
     <div id="debug-panel">
-        Sensors: <span id="status-sensor">Esperando...</span><br>
-        A: <span id="val-alpha">0</span> | B: <span id="val-beta">0</span> | G: <span id="val-gamma">0</span>
+        <div id="https-status">Protocolo: ...</div>
+        <div id="sensor-status">Sensores: Esperando...</div>
+        <div>A: <span id="val-alpha">0</span> | B: <span id="val-beta">0</span> | G: <span id="val-gamma">0</span></div>
     </div>
 
     <div id="overlay">
         <h1 class="text-4xl font-bold mb-4 text-blue-400">GYRO RACER 3D</h1>
-        <p class="mb-6 max-w-xs text-gray-300">Usa tu celular como un volante real.</p>
         
-        <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-full text-xl shadow-lg transition-transform active:scale-95">
-            CONECTAR SENSORES Y EMPEZAR
-        </button>
+        <div id="setup-view" class="w-full max-w-sm">
+            <div class="warning-step" id="https-warning" style="display:none;">
+                <p class="text-red-400 font-bold text-sm">⚠️ ERROR: NO HTTPS</p>
+                <p class="text-xs">Los sensores están bloqueados en sitios no seguros. Usa una URL HTTPS.</p>
+            </div>
 
-        <div id="brave-warning" class="warning-box max-w-sm">
-            <p class="font-bold text-red-400 mb-2">¡Atención usuarios de Brave!</p>
-            <p class="text-sm">Si los números de arriba no cambian al mover el móvil:</p>
-            <ol class="text-xs text-left mt-2 list-decimal ml-4 space-y-1">
-                <li>Haz clic en el icono de <b>León (Shields)</b> en la barra de direcciones.</li>
-                <li>Desactiva temporalmente los escudos o cambia "Protección contra huellas digitales" a estándar.</li>
-                <li>Asegúrate de estar en <b>HTTPS</b>.</li>
-            </ol>
+            <p class="mb-6 text-gray-300">Inclina tu dispositivo para conducir.</p>
+            
+            <button id="start-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-xl text-xl shadow-lg mb-4">
+                CONECTAR SENSORES
+            </button>
+
+            <div class="text-left text-xs text-gray-400 space-y-2">
+                <p><b>Brave Tips:</b></p>
+                <p>1. Clic en León (Shields) → Desactiva "Protección de huellas".</p>
+                <p>2. Ajustes → Privacidad → Sensores → Permitir.</p>
+            </div>
+        </div>
+
+        <div id="loading-view" style="display:none;">
+            <p class="text-xl animate-pulse">Sincronizando giroscopio...</p>
+            <p class="text-sm text-gray-500 mt-4">Si no detectamos movimiento en 3 segundos, activaremos el control táctil.</p>
         </div>
     </div>
 
     <script>
-        let scene, camera, renderer, car, road, clock;
+        let scene, camera, renderer, car, clock;
         let obstacles = [];
-        let speed = 0;
-        let score = 0;
-        let gameActive = false;
-        let sensorActive = false;
+        let speed = 0, score = 0;
+        let gameActive = false, sensorActive = false;
         let sensorData = { alpha: 0, beta: 0, gamma: 0 };
-        
-        const speedUi = document.getElementById('speed-ui');
-        const scoreUi = document.getElementById('score-ui');
+        let touchSteer = 0; // -1 a 1 para control táctil de emergencia
+
+        // UI Elements
         const overlay = document.getElementById('overlay');
+        const setupView = document.getElementById('setup-view');
+        const loadingView = document.getElementById('loading-view');
         const startBtn = document.getElementById('start-btn');
-        const braveWarning = document.getElementById('brave-warning');
-        const statusSensor = document.getElementById('status-sensor');
+        const statusText = document.getElementById('sensor-status');
+
+        function checkHTTPS() {
+            const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+            document.getElementById('https-status').innerText = "Protocolo: " + (isSecure ? "Seguro ✅" : "INSEGURO ❌");
+            if (!isSecure) document.getElementById('https-warning').style.display = 'block';
+            return isSecure;
+        }
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x050510);
-            scene.fog = new THREE.Fog(0x050510, 20, 150);
+            scene.background = new THREE.Color(0x0a0a1a);
+            scene.fog = new THREE.Fog(0x0a0a1a, 20, 160);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-            scene.add(ambientLight);
-            const spot = new THREE.SpotLight(0xffffff, 1);
-            spot.position.set(0, 10, 10);
-            scene.add(spot);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+            sun.position.set(5, 10, 5);
+            scene.add(sun);
 
-            // Carretera
+            // Carretera infinita (visual)
             const roadGeo = new THREE.PlaneGeometry(15, 2000);
-            const roadMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
-            road = new THREE.Mesh(roadGeo, roadMat);
+            const roadMat = new THREE.MeshStandardMaterial({ color: 0x151515 });
+            const road = new THREE.Mesh(roadGeo, roadMat);
             road.rotation.x = -Math.PI / 2;
             scene.add(road);
 
-            // Coche
-            const carGroup = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 2), new THREE.MeshStandardMaterial({ color: 0x00ffcc }));
-            carGroup.add(body);
-            const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.8), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-            cabin.position.set(0, 0.4, -0.2);
-            carGroup.add(cabin);
-            
-            car = carGroup;
-            car.position.y = 0.3;
+            // Coche simple
+            car = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 2.5), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
+            car.add(body);
+            const glass = new THREE.Mesh(new THREE.BoxGeometry(1, 0.4, 1), new THREE.MeshStandardMaterial({ color: 0x000000 }));
+            glass.position.set(0, 0.4, -0.2);
+            car.add(glass);
+            car.position.y = 0.4;
             scene.add(car);
 
-            spawnObstacles();
-            animate();
-            
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-        }
-
-        function spawnObstacles() {
-            for(let i = 0; i < 15; i++) {
-                const obs = new THREE.Mesh(
-                    new THREE.BoxGeometry(1.5, 1, 3), 
-                    new THREE.MeshStandardMaterial({ color: 0xff3300 })
-                );
-                resetObstacle(obs);
-                obs.position.z = -i * 40 - 30;
-                scene.add(obs);
+            for(let i=0; i<12; i++) {
+                const obs = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 3), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+                obs.position.z = -i * 40 - 50;
+                obs.position.x = (Math.random() - 0.5) * 10;
                 obstacles.push(obs);
+                scene.add(obs);
             }
+
+            checkHTTPS();
+            animate();
         }
 
-        function resetObstacle(obs) {
-            obs.position.z = car.position.z - 250 - (Math.random() * 100);
-            obs.position.x = (Math.random() - 0.5) * 12;
-        }
+        async function attemptActivation() {
+            setupView.style.display = 'none';
+            loadingView.style.display = 'block';
 
-        async function requestPermissions() {
-            // Caso iOS Safari
-            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission === 'granted') {
-                        activateSensors();
-                    } else {
-                        statusSensor.innerText = "Permiso denegado";
-                    }
-                } catch (e) {
-                    statusSensor.innerText = "Error permisos";
-                }
-            } else {
-                // Caso Android / Brave / Chrome
-                activateSensors();
-            }
+            // Intentar con el evento estándar
+            window.addEventListener('deviceorientation', updateSensors, true);
             
-            // Verificar si recibimos datos después de 1 segundo
+            // Intentar con el evento absoluto (a veces Brave lo prefiere)
+            window.addEventListener('deviceorientationabsolute', updateSensors, true);
+
+            // Para iOS específicamente
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const response = await DeviceOrientationEvent.requestPermission();
+                    if (response !== 'granted') statusText.innerText = "iOS: Permiso denegado";
+                } catch (e) {
+                    statusText.innerText = "Error permisos iOS";
+                }
+            }
+
+            // Timeout de 3 segundos: Si no hay sensor, activar touch
             setTimeout(() => {
                 if (!sensorActive) {
-                    braveWarning.style.display = 'block';
-                    statusSensor.innerText = "BLOQUEADO POR BROWSER";
-                    statusSensor.style.color = "#ff4444";
-                } else {
-                    startGame();
+                    console.log("Activando modo de emergencia (Touch)");
+                    statusText.innerText = "Modo: TÁCTIL (Sensor falló)";
+                    statusText.style.color = "#fbbf24";
+                    document.getElementById('touch-controls').style.display = 'block';
+                    initTouchEvents();
                 }
-            }, 1000);
+                startGame();
+            }, 3000);
         }
 
-        function activateSensors() {
-            window.addEventListener('deviceorientation', (event) => {
-                if (event.beta !== null) {
-                    sensorActive = true;
-                    statusSensor.innerText = "OK (Recibiendo)";
-                    statusSensor.style.color = "#0f0";
-                    
-                    sensorData.alpha = event.alpha || 0;
-                    sensorData.beta = event.beta || 0;
-                    sensorData.gamma = event.gamma || 0;
+        function updateSensors(event) {
+            if (event.beta === null && event.gamma === null) return;
+            
+            sensorActive = true;
+            statusText.innerText = "Giroscopio: ACTIVO";
+            statusText.style.color = "#4ade80";
+            
+            sensorData.alpha = event.alpha || 0;
+            sensorData.beta = event.beta || 0;
+            sensorData.gamma = event.gamma || 0;
 
-                    document.getElementById('val-alpha').innerText = Math.floor(sensorData.alpha);
-                    document.getElementById('val-beta').innerText = Math.floor(sensorData.beta);
-                    document.getElementById('val-gamma').innerText = Math.floor(sensorData.gamma);
-                }
-            }, true);
+            document.getElementById('val-alpha').innerText = Math.floor(sensorData.alpha);
+            document.getElementById('val-beta').innerText = Math.floor(sensorData.beta);
+            document.getElementById('val-gamma').innerText = Math.floor(sensorData.gamma);
+        }
+
+        function initTouchEvents() {
+            const left = document.getElementById('touch-left');
+            const right = document.getElementById('touch-right');
+            
+            const startLeft = () => touchSteer = 1;
+            const startRight = () => touchSteer = -1;
+            const stop = () => touchSteer = 0;
+
+            left.ontouchstart = startLeft;
+            left.ontouchend = stop;
+            right.ontouchstart = startRight;
+            right.ontouchend = stop;
+            // Soporte mouse para debug
+            left.onmousedown = startLeft;
+            left.onmouseup = stop;
+            right.onmousedown = startRight;
+            right.onmouseup = stop;
         }
 
         function startGame() {
@@ -200,58 +224,67 @@
         function animate() {
             requestAnimationFrame(animate);
             if (!gameActive) {
-                renderer.render(scene, camera);
+                if(renderer) renderer.render(scene, camera);
                 return;
             }
 
             const delta = clock.getDelta();
+            
+            // Lógica de Giro: Prioridad Sensor > Touch
+            let steering = 0;
+            if (sensorActive) {
+                steering = sensorData.gamma / 35; // Rango volante
+            } else {
+                steering = touchSteer;
+            }
 
-            // Lógica de conducción
-            // Gamma: Inclinación lateral (volante)
-            let steering = sensorData.gamma / 40; 
-            car.position.x -= steering * speed * delta * 0.6;
-            car.rotation.y = steering * 0.4;
-            car.rotation.z = -steering * 0.3;
-
-            // Beta: Inclinación frontal (acelerador)
-            // Calibramos para que a 45 grados esté en reposo y a 70 acelere
+            // Lógica Velocidad: Prioridad Sensor > Auto-acelerar
             let tilt = sensorData.beta;
-            let targetSpeed = 0;
-            if (tilt > 35) targetSpeed = (tilt - 35) * 3;
-            if (tilt < 20) targetSpeed = 0; // Freno
+            let targetSpeed = 60; // Velocidad base si no hay sensor
+            if (sensorActive) {
+                if (tilt > 30) targetSpeed = (tilt - 30) * 4;
+                else if (tilt < 15) targetSpeed = 10;
+            }
+            
+            speed += (targetSpeed - speed) * delta;
+            speed = Math.max(5, Math.min(speed, 140));
 
-            speed += (targetSpeed - speed) * delta * 1.5;
-            speed = Math.max(0, Math.min(speed, 120));
-
-            // Limites
-            car.position.x = Math.max(-6.5, Math.min(6.5, car.position.x));
+            // Aplicar movimiento
+            car.position.x -= steering * speed * delta * 0.7;
+            car.position.x = Math.max(-6, Math.min(6, car.position.x));
+            car.rotation.y = steering * 0.5;
+            car.rotation.z = -steering * 0.2;
             car.position.z -= speed * delta;
 
             // Cámara
-            camera.position.z = car.position.z + 6;
-            camera.position.x = car.position.x * 0.7;
-            camera.position.y = 3;
-            camera.lookAt(car.position.x, 0.5, car.position.z - 15);
+            camera.position.set(car.position.x * 0.5, 3.5, car.position.z + 7);
+            camera.lookAt(car.position.x, 0.5, car.position.z - 20);
 
             // Obstáculos
             obstacles.forEach(obs => {
                 if (obs.position.z > car.position.z + 10) {
-                    resetObstacle(obs);
+                    obs.position.z = car.position.z - 200 - Math.random()*50;
+                    obs.position.x = (Math.random() - 0.5) * 12;
                     score += 10;
                 }
-                if (car.position.distanceTo(obs.position) < 1.8) {
+                if (car.position.distanceTo(obs.position) < 2) {
                     speed *= 0.5;
-                    score = Math.max(0, score - 1);
+                    score = Math.max(0, score - 5);
                 }
             });
 
-            speedUi.innerText = Math.floor(speed);
-            scoreUi.innerText = score;
-
+            document.getElementById('speed-ui').innerText = Math.floor(speed);
+            document.getElementById('score-ui').innerText = score;
             renderer.render(scene, camera);
         }
 
-        startBtn.addEventListener('click', requestPermissions);
+        startBtn.addEventListener('click', attemptActivation);
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
         init();
     </script>
 </body>
