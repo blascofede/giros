@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gyro Ruta 3D - Simulador</title>
+    <title>Gyro Ruta 3D - Simulador Pro Max</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -61,7 +61,7 @@
 
     <div id="overlay">
         <h1 class="text-4xl font-bold mb-2 text-blue-400">RUTA 3D</h1>
-        <h2 class="text-xl mb-6 text-yellow-300">Conducción Realista</h2>
+        <h2 class="text-xl mb-6 text-yellow-300">Conducción Realista (Con Sombras)</h2>
         
         <div id="setup-view" class="w-full max-w-sm">
             <div class="warning-step" id="https-warning" style="display:none;">
@@ -70,24 +70,17 @@
             </div>
 
             <div class="bg-gray-800 p-4 rounded-xl text-sm text-left mb-6 border border-gray-600">
-                <p class="font-bold text-white mb-2">Misión del Chofer:</p>
+                <p class="font-bold text-white mb-2">Controles Invertidos:</p>
                 <ul class="list-disc pl-5 space-y-1 text-gray-300">
-                    <li>Manejas un micro de larga distancia. Eres más ancho de lo normal.</li>
-                    <li>Adelanta a los autos lentos por la <b>izquierda</b>.</li>
-                    <li>Cuidado con el tráfico que viene de frente.</li>
-                    <li><b>REGLA DE ORO:</b> Prohibido adelantar con <b>Doble Línea Amarilla</b> (curvas o lomas ciegas).</li>
+                    <li><b>ACELERAR:</b> Inclina el celular HACIA TI.</li>
+                    <li><b>FRENAR:</b> Aleja el celular de ti.</li>
+                    <li>Adelanta por la izquierda SIN pisar la Doble Amarilla.</li>
                 </ul>
             </div>
             
             <button id="start-btn" class="w-full bg-blue-600 hover:bg-green-600 text-white font-bold py-4 px-10 rounded-xl text-xl shadow-lg transition-colors mb-4">
                 ARRANCAR MOTOR
             </button>
-
-            <div class="text-left text-xs text-gray-400 space-y-2">
-                <p><b>Brave Tips:</b></p>
-                <p>1. Clic en León (Shields) → Desactiva "Protección de huellas".</p>
-                <p>2. Configuración > Configuración de Sitios > Sensores de movimiento > PERMITIR.</p>
-            </div>
         </div>
 
         <div id="loading-view" style="display:none;">
@@ -96,25 +89,31 @@
     </div>
 
     <script>
-        let scene, camera, renderer, car, clock;
-        let roadGeo, grassGeo;
+        let scene, camera, renderer, car, clock, sun;
+        let roadGeo, grassGeo, sideLineGeoL, sideLineGeoR;
+        let mountains = [];
         let centerLines = [];
+        let posts = [];
+        let signs = [];
         let trees = [];
+        let cows = [];
         let traffic = [];
+        let clouds = [];
         
         // Físicas y Lógica
-        let playerLogicalZ = 0; // Posición lógica en la ruta infinita (negativa hacia adelante)
-        let playerLogicalX = 3.5; // Carril derecho por defecto
+        let playerLogicalZ = 0; 
+        let playerLogicalX = 3.5; 
         let speed = 0, score = 0;
         let gameActive = false, sensorActive = false;
         let sensorData = { alpha: 0, beta: 0, gamma: 0 };
         let touchSteer = 0; 
         
-        // Materiales compartidos
-        const matAsphalt = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 });
-        const matGrass = new THREE.MeshStandardMaterial({ color: 0x2d6a4f, roughness: 1.0 });
+        // Materiales mejorados para recibir sombras (Lambert)
+        const matAsphalt = new THREE.MeshLambertMaterial({ color: 0x666666, side: THREE.DoubleSide });
+        const matGrass = new THREE.MeshLambertMaterial({ color: 0x3d8c40, side: THREE.DoubleSide });
         const matDashedWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const matDoubleYellow = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
+        const matTire = new THREE.MeshLambertMaterial({ color: 0x111111 });
 
         const feedbackMsg = document.getElementById('feedback-msg');
 
@@ -125,99 +124,249 @@
             return isSecure;
         }
 
-        // Función matemática principal: Define la forma de la ruta en cualquier punto Z
-        function getTrackInfo(z) {
-            const zScaled = z * 0.003;
-            // Curvas suaves combinando ondas
-            const x = Math.sin(zScaled) * 50 + Math.sin(zScaled * 0.4) * 30;
-            // Lomas y bajadas
-            const y = Math.sin(zScaled * 1.5) * 12 + Math.cos(zScaled * 0.7) * 8;
+        function createSignTexture(text, isWarning) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
             
-            // Derivadas para calcular pendiente y curvatura
-            const dx = Math.cos(zScaled) * 50 * 0.003 + Math.cos(zScaled * 0.4) * 30 * 0.0012;
-            const dy = Math.cos(zScaled * 1.5) * 12 * 0.0045 - Math.sin(zScaled * 0.7) * 8 * 0.0021;
+            ctx.fillStyle = isWarning ? '#ffcc00' : '#ffffff';
+            ctx.fillRect(0, 0, 256, 256);
+            ctx.strokeStyle = isWarning ? '#000000' : '#ff0000';
+            ctx.lineWidth = 15;
+            ctx.strokeRect(10, 10, 236, 236);
             
-            // Si la curva es muy cerrada o hay una bajada ciega repentina, es zona insegura (Doble Amarilla)
-            const isUnsafe = Math.abs(dx) > 0.09 || dy < -0.025;
+            ctx.fillStyle = '#000000';
+            ctx.font = 'bold 35px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            const lines = text.split('\n');
+            lines.forEach((line, i) => {
+                ctx.fillText(line, 128, 128 - ((lines.length - 1) * 20) + (i * 45));
+            });
+            
+            return new THREE.CanvasTexture(canvas);
+        }
 
+        // Matemáticas de la ruta
+        function getTrackInfo(z) {
+            const zScaled = z * 0.002;
+            const x = Math.sin(zScaled) * 120 + Math.sin(zScaled * 0.4) * 60;
+            const y = Math.sin(zScaled * 1.5) * 20 + Math.cos(zScaled * 0.7) * 10;
+            
+            const dx = Math.cos(zScaled) * 120 * 0.002 + Math.cos(zScaled * 0.4) * 60 * 0.0008;
+            const dy = Math.cos(zScaled * 1.5) * 20 * 0.003 - Math.sin(zScaled * 0.7) * 10 * 0.0014;
+            
+            const isUnsafe = Math.abs(dx) > 0.15 || dy < -0.025;
             return { x, y, dx, dy, isUnsafe };
         }
 
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87CEEB);
-            scene.fog = new THREE.Fog(0x87CEEB, 40, 250);
+            scene.background = new THREE.Color(0x87CEEB); 
+            scene.fog = new THREE.Fog(0x87CEEB, 80, 1000); 
 
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 800);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1200);
+            
+            // Renderizador con SOMBRAS ACTIVADAS
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-            const sun = new THREE.DirectionalLight(0xffffff, 1);
-            sun.position.set(10, 30, 20);
+            // Sistema de Luces Realista
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+            
+            sun = new THREE.DirectionalLight(0xffffff, 1.2);
+            sun.position.set(50, 100, 20);
+            sun.castShadow = true;
+            sun.shadow.mapSize.width = 1024;
+            sun.shadow.mapSize.height = 1024;
+            sun.shadow.camera.near = 10;
+            sun.shadow.camera.far = 300;
+            sun.shadow.camera.left = -60;
+            sun.shadow.camera.right = 60;
+            sun.shadow.camera.top = 60;
+            sun.shadow.camera.bottom = -100;
             scene.add(sun);
+            scene.add(sun.target);
 
-            // Generar Malla de Ruta Dinámica
-            // 16m ancho, 1000m largo. 100 segmentos.
-            roadGeo = new THREE.PlaneGeometry(16, 1000, 1, 100);
-            roadGeo.translate(0, 500, 0); // Ajustar pivote
-            roadGeo.rotateX(-Math.PI / 2); // Acostar plano
+            // Nubes
+            const cloudGeo = new THREE.SphereGeometry(1, 8, 8);
+            const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+            for(let i=0; i<15; i++) {
+                let cGroup = new THREE.Group();
+                for(let j=0; j<5; j++) {
+                    let p = new THREE.Mesh(cloudGeo, cloudMat);
+                    p.position.set((Math.random()-0.5)*5, (Math.random()-0.5)*2, (Math.random()-0.5)*5);
+                    p.scale.setScalar(Math.random() * 4 + 2);
+                    cGroup.add(p);
+                }
+                cGroup.position.set((Math.random()-0.5)*800, 80 + Math.random()*50, -Math.random()*1000);
+                scene.add(cGroup);
+                clouds.push(cGroup);
+            }
+
+            // Generar Montañas 3D lejanas reales
+            const mountGeo = new THREE.ConeGeometry(150, 300, 5);
+            const mountMat = new THREE.MeshLambertMaterial({ color: 0x2b5e43 });
+            const mountMat2 = new THREE.MeshLambertMaterial({ color: 0x1f4732 });
+            for(let i=0; i<30; i++) {
+                let m = new THREE.Mesh(mountGeo, Math.random() > 0.5 ? mountMat : mountMat2);
+                m.userData = {
+                    logicalZ: -Math.random() * 4000,
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (200 + Math.random() * 400)
+                };
+                m.rotation.y = Math.random() * Math.PI;
+                scene.add(m);
+                mountains.push(m);
+            }
+
+            // Mallas Dinámicas: Asfalto y Pasto (Aceptan sombras)
+            roadGeo = new THREE.PlaneGeometry(16, 1100, 1, 100);
+            grassGeo = new THREE.PlaneGeometry(1400, 1100, 1, 100);
+            sideLineGeoL = new THREE.PlaneGeometry(0.4, 1100, 1, 100);
+            sideLineGeoR = new THREE.PlaneGeometry(0.4, 1100, 1, 100);
+
             const road = new THREE.Mesh(roadGeo, matAsphalt);
-            scene.add(road);
-
-            // Generar Malla de Pasto Dinámica
-            grassGeo = new THREE.PlaneGeometry(300, 1000, 1, 100);
-            grassGeo.translate(0, 500, 0);
-            grassGeo.rotateX(-Math.PI / 2);
+            road.receiveShadow = true;
             const grass = new THREE.Mesh(grassGeo, matGrass);
-            grass.position.y = -0.1;
+            grass.receiveShadow = true;
+            
+            const sideL = new THREE.Mesh(sideLineGeoL, matDashedWhite);
+            const sideR = new THREE.Mesh(sideLineGeoR, matDashedWhite);
+
             scene.add(grass);
+            scene.add(road);
+            scene.add(sideL);
+            scene.add(sideR);
 
             // Líneas centrales dinámicas
             const lineGeom = new THREE.PlaneGeometry(0.5, 5);
             lineGeom.rotateX(-Math.PI / 2);
-            for (let i = 0; i < 60; i++) {
+            for (let i = 0; i < 80; i++) {
                 let line = new THREE.Mesh(lineGeom, matDashedWhite);
+                line.userData = { id: i }; 
                 centerLines.push(line);
                 scene.add(line);
             }
 
-            // Crear Colectivo del Jugador
+            // Postes reflectivos 
+            const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.2);
+            const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const postTopMat = new THREE.MeshBasicMaterial({ color: 0xff0000 }); 
+            
+            let basePost = new THREE.Group();
+            let pBody = new THREE.Mesh(postGeo, postMat);
+            pBody.castShadow = true;
+            basePost.add(pBody);
+            let topL = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.3), postTopMat);
+            topL.position.y = 0.5;
+            basePost.add(topL);
+
+            for (let i = 0; i < 50; i++) {
+                let pL = basePost.clone();
+                let pR = basePost.clone();
+                pL.userData = { id: i }; 
+                pR.userData = { id: i };
+                posts.push({ left: pL, right: pR });
+                scene.add(pL);
+                scene.add(pR);
+            }
+
+            // Señales de Tránsito
+            const signGeo = new THREE.PlaneGeometry(3.5, 3.5);
+            const poleGeo = new THREE.CylinderGeometry(0.1, 0.1, 4);
+            const poleMat = new THREE.MeshStandardMaterial({color: 0x555555});
+            for(let i=0; i<4; i++) {
+                let signGroup = new THREE.Group();
+                let tex = createSignTexture("MAX\n90", false);
+                let signMesh = new THREE.Mesh(signGeo, new THREE.MeshBasicMaterial({ map: tex }));
+                signMesh.position.y = 3.5;
+                signGroup.add(signMesh);
+                let pole = new THREE.Mesh(poleGeo, poleMat);
+                pole.position.y = 1.5;
+                pole.castShadow = true;
+                signGroup.add(pole);
+                signGroup.userData = { logicalZ: -300 - (i * 400), mesh: signMesh };
+                signs.push(signGroup);
+                scene.add(signGroup);
+            }
+
+            // Colectivo del Jugador
             car = new THREE.Group();
-            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.8, 8), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
-            busBody.position.y = 1.9;
+            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.8, 8), new THREE.MeshLambertMaterial({ color: 0xeeeeee }));
+            busBody.position.y = 2.1;
+            busBody.castShadow = true;
             car.add(busBody);
-            const busStripe = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.5, 8.01), new THREE.MeshStandardMaterial({ color: 0x1d4ed8 }));
-            busStripe.position.y = 1.5;
+            
+            const busStripe = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.5, 8.01), new THREE.MeshLambertMaterial({ color: 0x1d4ed8 }));
+            busStripe.position.y = 1.7;
             car.add(busStripe);
-            const busGlass = new THREE.Mesh(new THREE.BoxGeometry(2.42, 1.2, 7.8), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 }));
-            busGlass.position.y = 2.8;
+            
+            const busGlass = new THREE.Mesh(new THREE.BoxGeometry(2.42, 1.2, 7.8), new THREE.MeshLambertMaterial({ color: 0x111111 }));
+            busGlass.position.y = 3.0;
             car.add(busGlass);
+            
+            // Ruedas Colectivo
+            const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.5, 16);
+            wheelGeo.rotateZ(Math.PI / 2);
+            const busOffsets = [[-1.2, -2.5], [1.2, -2.5], [-1.2, 2.5], [1.2, 2.5], [-1.2, 3.5], [1.2, 3.5]];
+            busOffsets.forEach(off => {
+                let w = new THREE.Mesh(wheelGeo, matTire);
+                w.position.set(off[0], 0.5, off[1]);
+                w.castShadow = true;
+                car.add(w);
+            });
             scene.add(car);
 
             // Árboles
             const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 2);
             const leavesGeo = new THREE.ConeGeometry(2.5, 6, 7);
-            const matTrunk = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
-            const matLeaves = new THREE.MeshStandardMaterial({ color: 0x1b4332 });
+            const matTrunk = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
+            const matLeaves = new THREE.MeshLambertMaterial({ color: 0x1b4332 });
             for(let i=0; i<40; i++) {
                 let tree = new THREE.Group();
                 let trunk = new THREE.Mesh(trunkGeo, matTrunk);
                 trunk.position.y = 1;
+                trunk.castShadow = true;
                 let leaves = new THREE.Mesh(leavesGeo, matLeaves);
                 leaves.position.y = 4;
+                leaves.castShadow = true;
                 tree.add(trunk);
                 tree.add(leaves);
-                
-                // Propiedades lógicas
                 tree.userData = {
                     logicalZ: -Math.random() * 1000,
-                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (12 + Math.random() * 30)
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (14 + Math.random() * 30)
                 };
                 scene.add(tree);
                 trees.push(tree);
+            }
+
+            // Vacas
+            const cowBodyGeo = new THREE.BoxGeometry(1.6, 1.2, 2.5);
+            const cowHeadGeo = new THREE.BoxGeometry(0.8, 0.8, 1);
+            const matCowWhite = new THREE.MeshLambertMaterial({color: 0xffffff});
+            const matCowBlack = new THREE.MeshLambertMaterial({color: 0x222222});
+            for(let i=0; i<15; i++) {
+                let cow = new THREE.Group();
+                let body = new THREE.Mesh(cowBodyGeo, matCowWhite);
+                body.position.y = 0.8;
+                body.castShadow = true;
+                let spot = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.8, 1.2), matCowBlack);
+                spot.position.set(0, 0.8, 0.2);
+                let head = new THREE.Mesh(cowHeadGeo, matCowWhite);
+                head.position.set(0, 1.4, -1.3);
+                head.castShadow = true;
+                cow.add(body); cow.add(spot); cow.add(head);
+                cow.userData = {
+                    logicalZ: -Math.random() * 1000,
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (20 + Math.random() * 25)
+                };
+                scene.add(cow);
+                cows.push(cow);
             }
 
             checkHTTPS();
@@ -226,48 +375,53 @@
 
         function createTrafficCar(lane, zOffset) {
             const group = new THREE.Group();
-            
-            // Modelos de auto variados
             const colors = [0xff0000, 0x0000ff, 0xc0c0c0, 0x00ff00, 0xffffff];
             const color = colors[Math.floor(Math.random() * colors.length)];
             
-            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 4), new THREE.MeshStandardMaterial({ color: color }));
-            body.position.y = 0.6;
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 4), new THREE.MeshLambertMaterial({ color: color }));
+            body.position.y = 0.8;
+            body.castShadow = true;
             group.add(body);
 
-            // Luces (Rojas atrás si van en nuestro sentido, Blancas adelante si vienen en contra)
+            // Ruedas Auto
+            const wGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 16);
+            wGeo.rotateZ(Math.PI / 2);
+            const offsets = [[-0.9, -1.2], [0.9, -1.2], [-0.9, 1.2], [0.9, 1.2]];
+            offsets.forEach(off => {
+                let w = new THREE.Mesh(wGeo, matTire);
+                w.position.set(off[0], 0.35, off[1]);
+                w.castShadow = true;
+                group.add(w);
+            });
+
             const lightGeo = new THREE.BoxGeometry(1.6, 0.2, 0.2);
             let lightMat;
-            if (lane === 1) { // Va hacia adelante (Luz roja trasera nos mira)
+            if (lane === 1) { 
                 lightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
                 const light = new THREE.Mesh(lightGeo, lightMat);
-                light.position.set(0, 0.6, 1.95); // Parte de atrás
+                light.position.set(0, 0.8, 1.95); 
                 group.add(light);
-            } else { // Viene hacia nosotros (Luz blanca delantera nos mira)
+            } else { 
                 lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
                 const light = new THREE.Mesh(lightGeo, lightMat);
-                light.position.set(0, 0.6, 1.95); // Frente (giraremos el auto entero)
+                light.position.set(0, 0.8, 1.95); 
                 group.add(light);
             }
 
             group.userData = {
                 logicalZ: playerLogicalZ - zOffset,
                 lane: lane,
-                speed: lane === 1 ? 40 : -70, // Positivo va con nosotros, negativo viene
+                speed: lane === 1 ? 40 : -70,
                 overtaken: false
             };
-            
             scene.add(group);
             traffic.push(group);
         }
 
         function spawnTrafficInitial() {
-            // Autos lentos carril derecho
             createTrafficCar(1, 150);
             createTrafficCar(1, 350);
             createTrafficCar(1, 600);
-            
-            // Autos rápidos carril izquierdo (vienen)
             createTrafficCar(-1, 800);
             createTrafficCar(-1, 1200);
         }
@@ -282,16 +436,12 @@
         async function attemptActivation() {
             document.getElementById('setup-view').style.display = 'none';
             document.getElementById('loading-view').style.display = 'block';
-
             window.addEventListener('deviceorientation', updateSensors, true);
             window.addEventListener('deviceorientationabsolute', updateSensors, true);
 
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    await DeviceOrientationEvent.requestPermission();
-                } catch (e) { console.error(e); }
+                try { await DeviceOrientationEvent.requestPermission(); } catch (e) { }
             }
-
             setTimeout(() => {
                 if (!sensorActive) {
                     document.getElementById('sensor-status').innerText = "Modo: TÁCTIL";
@@ -306,7 +456,6 @@
             if (event.beta === null && event.gamma === null) return;
             sensorActive = true;
             document.getElementById('sensor-status').innerText = "Sensor ACTIVO";
-            
             sensorData.alpha = event.alpha || 0;
             sensorData.beta = event.beta || 0;
             sensorData.gamma = event.gamma || 0;
@@ -318,7 +467,6 @@
             const startLeft = () => touchSteer = -1;
             const startRight = () => touchSteer = 1;
             const stop = () => touchSteer = 0;
-
             left.ontouchstart = startLeft; left.ontouchend = stop;
             right.ontouchstart = startRight; right.ontouchend = stop;
             left.onmousedown = startLeft; left.onmouseup = stop;
@@ -332,22 +480,26 @@
             spawnTrafficInitial();
         }
 
-        // Función para doblar la malla de la ruta y el pasto
-        function updateGeometryVertices(geo, width) {
+        // SOLUCIÓN AL ABISMO (Z FIX): Dibuja desde +80m (atrás tuyo) hasta -1000m (adelante)
+        function updateGeometryVertices(geo, width, offsetX = 0) {
             const pos = geo.attributes.position;
-            // 100 segmentos = 101 filas de vértices
             for (let i = 0; i <= 100; i++) {
-                let visualZ = - (i / 100) * 1000;
+                // VisualZ comienza en +80 y baja hasta -1020 garantizando que cubre la zona de la cámara
+                let visualZ = 80 - ((100 - i) / 100) * 1100;
                 let logicalZ = playerLogicalZ + visualZ;
                 let info = getTrackInfo(logicalZ);
                 
                 let idxLeft = i * 2;
                 let idxRight = i * 2 + 1;
                 
-                pos.setXYZ(idxLeft, -(width/2) + info.x, info.y, visualZ);
-                pos.setXYZ(idxRight,  (width/2) + info.x, info.y, visualZ);
+                let yOffset = offsetX === 0 ? 0 : 0.02;
+                if(width > 100) yOffset = -0.1; 
+                
+                pos.setXYZ(idxLeft, offsetX - (width/2) + info.x, info.y + yOffset, visualZ);
+                pos.setXYZ(idxRight, offsetX + (width/2) + info.x, info.y + yOffset, visualZ);
             }
             pos.needsUpdate = true;
+            geo.computeVertexNormals(); 
         }
 
         function animate() {
@@ -356,44 +508,67 @@
 
             const delta = clock.getDelta();
             
-            // --- Lógica de Controles ---
-            let targetLaneX = 3.5; // Carril derecho por defecto
+            // --- Dirección ---
+            let targetLaneX = 3.5; 
             if (sensorActive) {
-                // Gamma > 0 es inclinar a la derecha. Queremos que el rango sea de -4 a 4.
                 targetLaneX = (sensorData.gamma / 30) * 5; 
             } else {
                 targetLaneX = touchSteer * 4.5;
             }
-            
-            // Suavizado del volante
             playerLogicalX += (targetLaneX - playerLogicalX) * delta * 3;
             playerLogicalX = Math.max(-4.5, Math.min(4.5, playerLogicalX));
 
-            // Velocidad
+            // --- Aceleración ---
             let tilt = sensorData.beta;
-            let targetSpeed = 70; // Velocidad de crucero base
+            let targetSpeed = 70; 
             if (sensorActive) {
-                if (tilt > 30) targetSpeed = 70 + (tilt - 30) * 2;
-                else if (tilt < 15) targetSpeed = 20; // Frenar al enderezar
+                if (tilt > 50) targetSpeed = 70 + (tilt - 50) * 2;
+                else if (tilt < 40) targetSpeed = Math.max(0, tilt); 
             }
-            speed += (targetSpeed - speed) * delta;
-            speed = Math.max(0, Math.min(speed, 110)); // Limite de velocidad
+            speed += (targetSpeed - speed) * delta * 1.5;
+            speed = Math.max(0, Math.min(speed, 110)); 
 
-            // Avance del jugador
-            // Convertimos km/h a m/s (aprox dividir por 3.6)
             playerLogicalZ -= (speed / 3.6) * delta * 2; 
 
             let pInfo = getTrackInfo(playerLogicalZ);
             document.getElementById('val-unsafe').innerText = pInfo.isUnsafe ? "SÍ" : "NO";
             document.getElementById('val-unsafe').style.color = pInfo.isUnsafe ? "#ff0000" : "#00ff00";
 
-            // --- Actualizar Mallas del Mundo ---
-            updateGeometryVertices(roadGeo, 16);
-            updateGeometryVertices(grassGeo, 300);
+            // --- Mallas Continuas (Reparadas) ---
+            updateGeometryVertices(roadGeo, 16, 0); 
+            updateGeometryVertices(grassGeo, 1400, 0); 
+            updateGeometryVertices(sideLineGeoL, 0.4, -7.8); 
+            updateGeometryVertices(sideLineGeoR, 0.4, 7.8); 
 
-            // --- Actualizar Líneas Centrales ---
-            centerLines.forEach((line, i) => {
-                let visualZ = -i * 12 - (Math.abs(playerLogicalZ) % 12);
+            // --- Nubes ---
+            clouds.forEach(c => {
+                c.position.x += delta * 6; // Viento
+                if (c.position.x > 400) c.position.x = -400;
+            });
+
+            // --- Montañas Distantes ---
+            mountains.forEach(m => {
+                if (m.userData.logicalZ > playerLogicalZ + 200) {
+                    m.userData.logicalZ -= 4000;
+                }
+                let info = getTrackInfo(m.userData.logicalZ);
+                let visualZ = m.userData.logicalZ - playerLogicalZ;
+                m.position.set(info.x + m.userData.logicalX, info.y - 20, visualZ);
+            });
+
+            // --- Postes y Líneas (Ajustados al nuevo rango Z) ---
+            posts.forEach(p => {
+                // Genera postes desde +80m hasta -670m
+                let visualZ = 80 - p.left.userData.id * 15 + (Math.abs(playerLogicalZ) % 15);
+                let logicalZ = playerLogicalZ + visualZ;
+                let info = getTrackInfo(logicalZ);
+                
+                p.left.position.set(info.x - 8.5, info.y + 0.6, visualZ);
+                p.right.position.set(info.x + 8.5, info.y + 0.6, visualZ);
+            });
+
+            centerLines.forEach(line => {
+                let visualZ = 80 - line.userData.id * 12 + (Math.abs(playerLogicalZ) % 12);
                 let logicalZ = playerLogicalZ + visualZ;
                 let info = getTrackInfo(logicalZ);
                 let nextInfo = getTrackInfo(logicalZ - 5);
@@ -403,81 +578,100 @@
                 
                 if (info.isUnsafe) {
                     line.material = matDoubleYellow;
-                    line.scale.z = 2.5; // Casi continua
+                    line.scale.z = 2.5; 
                 } else {
                     line.material = matDashedWhite;
-                    line.scale.z = 1.0; // Punteada
+                    line.scale.z = 1.0; 
                 }
             });
 
-            // --- Actualizar Árboles ---
+            // --- Árboles y Vacas ---
             trees.forEach(tree => {
-                // Si el árbol quedó atrás, mandarlo adelante
-                if (tree.userData.logicalZ > playerLogicalZ + 50) {
-                    tree.userData.logicalZ = playerLogicalZ - 900 - Math.random() * 200;
+                if (tree.userData.logicalZ > playerLogicalZ + 80) {
+                    tree.userData.logicalZ -= 900 + Math.random() * 200;
                 }
                 let info = getTrackInfo(tree.userData.logicalZ);
                 let visualZ = tree.userData.logicalZ - playerLogicalZ;
                 tree.position.set(info.x + tree.userData.logicalX, info.y, visualZ);
             });
 
-            // --- Posicionar al Jugador Visualmente ---
+            cows.forEach(cow => {
+                if (cow.userData.logicalZ > playerLogicalZ + 80) {
+                    cow.userData.logicalZ -= 900 + Math.random() * 200;
+                }
+                let info = getTrackInfo(cow.userData.logicalZ);
+                let visualZ = cow.userData.logicalZ - playerLogicalZ;
+                cow.position.set(info.x + cow.userData.logicalX, info.y + 0.5, visualZ);
+                cow.rotation.y = Math.sin(cow.userData.logicalZ); 
+            });
+
+            // --- Señales ---
+            signs.forEach(sign => {
+                if (sign.userData.logicalZ > playerLogicalZ + 40) {
+                    sign.userData.logicalZ -= 1000 + Math.random() * 500;
+                    let infoAhead = getTrackInfo(sign.userData.logicalZ - 150);
+                    let isDanger = infoAhead.isUnsafe;
+                    
+                    let tex = createSignTexture(isDanger ? "CURVA\nPELIGROSA" : "MAX\n90", isDanger);
+                    sign.userData.mesh.material.map.dispose();
+                    sign.userData.mesh.material.map = tex;
+                    sign.userData.mesh.material.needsUpdate = true;
+                }
+                let sInfo = getTrackInfo(sign.userData.logicalZ);
+                let visualZ = sign.userData.logicalZ - playerLogicalZ;
+                sign.position.set(sInfo.x + 9, sInfo.y, visualZ);
+                sign.lookAt(sInfo.x + 9, sInfo.y, visualZ + 10);
+            });
+
+            // --- Jugador, Cámara y Sol ---
             let nextPInfo = getTrackInfo(playerLogicalZ - 5);
             car.position.set(pInfo.x + playerLogicalX, pInfo.y, 0);
             car.lookAt(nextPInfo.x + playerLogicalX, nextPInfo.y, -5);
 
-            // Cámara sigue al micro
             camera.position.set(pInfo.x + playerLogicalX * 0.3, pInfo.y + 6.5, 12);
             camera.lookAt(car.position.x, car.position.y + 2, -20);
+            camera.rotation.z = -pInfo.dx * 1.0; 
 
-            // --- Lógica del Tráfico y Misiones ---
+            // Mantener el sol y su zona de sombra atados a la cámara
+            sun.position.x = camera.position.x + 50;
+            sun.position.z = 20;
+            sun.target.position.set(camera.position.x, 0, -40);
+            sun.target.updateMatrixWorld();
+
+            // --- Tráfico ---
             traffic.forEach(t => {
-                // Mover tráfico
                 t.userData.logicalZ -= (t.userData.speed / 3.6) * delta * 2;
-                
-                // Reciclar tráfico si se aleja mucho
                 if (t.userData.logicalZ > playerLogicalZ + 100 || t.userData.logicalZ < playerLogicalZ - 1500) {
-                    // Reposicionar adelante
                     t.userData.logicalZ = playerLogicalZ - 800 - Math.random() * 600;
-                    t.userData.overtaken = false; // Resetear bandera de adelantamiento
+                    t.userData.overtaken = false;
                 }
-
-                // Actualizar posición visual
                 let tInfo = getTrackInfo(t.userData.logicalZ);
                 let tNextInfo = getTrackInfo(t.userData.logicalZ - 5);
                 let visualZ = t.userData.logicalZ - playerLogicalZ;
                 
-                let laneX = t.userData.lane * 3.5; // -3.5 izq, 3.5 der
+                let laneX = t.userData.lane * 3.5;
                 t.position.set(tInfo.x + laneX, tInfo.y, visualZ);
                 
-                // Orientación realista
                 if (t.userData.lane === 1) {
                     t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ - 5);
                 } else {
-                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ + 5); // Mira hacia nosotros
+                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ + 5); 
                 }
 
-                // --- COLISIONES ---
                 let distZ = Math.abs(t.userData.logicalZ - playerLogicalZ);
                 let distX = Math.abs(laneX - playerLogicalX);
                 
-                // Cajas de colisión: Largo bus(8) + auto(4)/2 = 6. Ancho bus(2.4) + auto(1.8)/2 = 2.1
                 if (distZ < 6 && distX < 2.1) {
-                    speed *= 0.3; // Freno drástico por choque
+                    speed *= 0.3; 
                     score = Math.max(0, score - 15);
                     showFeedback("¡CHOQUE! -15", true);
-                    t.userData.logicalZ = playerLogicalZ + 50; // Mandar el auto chocado atrás
+                    t.userData.logicalZ = playerLogicalZ + 50; 
                 }
 
-                // --- SISTEMA DE ADELANTAMIENTO (LA MISIÓN) ---
                 if (t.userData.lane === 1 && !t.userData.overtaken) {
-                    // Si el jugador superó al auto
                     if (playerLogicalZ < t.userData.logicalZ - 4) {
                         t.userData.overtaken = true;
-                        
-                        // Verificar si estaba en el carril izquierdo (adelantando correctamente)
                         if (playerLogicalX < 0) {
-                            // ¿Había doble línea amarilla?
                             if (pInfo.isUnsafe) {
                                 score -= 10;
                                 showFeedback("¡INFRACCIÓN! LÍNEA AMARILLA -10", true);
