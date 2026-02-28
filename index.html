@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gyro Racer 3D</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { display: block; }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 100;
+            color: white; text-align: center; padding: 20px;
+        }
+        #hud {
+            position: absolute; top: 20px; left: 20px; color: #0f0;
+            font-family: 'Courier New', Courier, monospace; pointer-events: none;
+            text-shadow: 2px 2px #000;
+        }
+        .sensor-val { font-size: 0.8rem; color: #aaa; }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="text-2xl font-bold">VELOCIDAD: <span id="speed-ui">0</span> KM/H</div>
+        <div class="text-xl">PUNTOS: <span id="score-ui">0</span></div>
+        <div class="mt-4">
+            <div class="sensor-val">Alpha (Brújula): <span id="val-alpha">0</span>°</div>
+            <div class="sensor-val">Beta (Inclinación): <span id="val-beta">0</span>°</div>
+            <div class="sensor-val">Gamma (Volante): <span id="val-gamma">0</span>°</div>
+        </div>
+    </div>
+
+    <div id="overlay">
+        <h1 class="text-4xl font-bold mb-4">GYRO RACER 3D</h1>
+        <p class="mb-6 max-w-xs">Gira el móvil como un volante para cruzar el tráfico. Inclina adelante para acelerar.</p>
+        <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-xl transition-transform active:scale-95">
+            INICIAR CARRERA
+        </button>
+        <p class="mt-4 text-sm text-gray-400">Requiere acceso al acelerómetro/giroscopio</p>
+    </div>
+
+    <script>
+        // Variables de Juego
+        let scene, camera, renderer, car, road, clock;
+        let obstacles = [];
+        let speed = 0;
+        let score = 0;
+        let gameActive = false;
+        
+        // Datos de Sensores
+        let sensorData = { alpha: 0, beta: 0, gamma: 0 };
+        
+        // Elementos UI
+        const speedUi = document.getElementById('speed-ui');
+        const scoreUi = document.getElementById('score-ui');
+        const overlay = document.getElementById('overlay');
+        const startBtn = document.getElementById('start-btn');
+        
+        const valAlpha = document.getElementById('val-alpha');
+        const valBeta = document.getElementById('val-beta');
+        const valGamma = document.getElementById('val-gamma');
+
+        // Inicialización
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111122);
+            scene.fog = new THREE.Fog(0x111122, 20, 100);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // Luces
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+            sun.position.set(5, 10, 5);
+            scene.add(sun);
+
+            // Suelo / Carretera
+            const roadGeo = new THREE.PlaneGeometry(20, 1000);
+            const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            road = new THREE.Mesh(roadGeo, roadMat);
+            road.rotation.x = -Math.PI / 2;
+            scene.add(road);
+
+            // Líneas de la carretera
+            const lineGeo = new THREE.PlaneGeometry(0.2, 1000);
+            const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const lineLeft = new THREE.Mesh(lineGeo, lineMat);
+            lineLeft.position.set(-3, 0.01, 0);
+            lineLeft.rotation.x = -Math.PI / 2;
+            scene.add(lineLeft);
+
+            const lineRight = new THREE.Mesh(lineGeo, lineMat);
+            lineRight.position.set(3, 0.01, 0);
+            lineRight.rotation.x = -Math.PI / 2;
+            scene.add(lineRight);
+
+            // Coche del Jugador
+            const carGroup = new THREE.Group();
+            
+            // Cuerpo
+            const bodyGeo = new THREE.BoxGeometry(1, 0.5, 2);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            carGroup.add(body);
+
+            // Techo
+            const cabinGeo = new THREE.BoxGeometry(0.8, 0.4, 1);
+            const cabinMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+            cabin.position.y = 0.45;
+            carGroup.add(cabin);
+
+            car = carGroup;
+            car.position.y = 0.3;
+            scene.add(car);
+
+            // Posición de cámara inicial
+            camera.position.set(0, 3, 5);
+            camera.lookAt(car.position);
+
+            clock = new THREE.Clock();
+            
+            window.addEventListener('resize', onWindowResize, false);
+            
+            spawnObstacles();
+            animate();
+        }
+
+        function spawnObstacles() {
+            for(let i = 0; i < 20; i++) {
+                const obsGeo = new THREE.BoxGeometry(1.2, 0.8, 2);
+                const obsMat = new THREE.MeshStandardMaterial({ color: 0x0077ff });
+                const obs = new THREE.Mesh(obsGeo, obsMat);
+                resetObstacle(obs);
+                obs.position.z = -i * 30 - 20;
+                scene.add(obs);
+                obstacles.push(obs);
+            }
+        }
+
+        function resetObstacle(obs) {
+            obs.position.z = car.position.z - 200 - (Math.random() * 100);
+            obs.position.x = (Math.random() - 0.5) * 10;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Permisos y Sensores
+        async function requestPermissions() {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                        startGame();
+                    } else {
+                        alert("Permiso denegado para acceder a los sensores.");
+                    }
+                } catch (error) {
+                    console.error(error);
+                }
+            } else {
+                // Navegadores que no requieren permiso explícito (Android)
+                window.addEventListener('deviceorientation', handleOrientation);
+                startGame();
+            }
+        }
+
+        function handleOrientation(event) {
+            // Gamma: Inclinación lateral (izquierda/derecha) -> Volante
+            // Beta: Inclinación longitudinal (adelante/atrás) -> Aceleración
+            // Alpha: Rotación sobre el eje Z (norte magnético) -> Orientación
+            
+            sensorData.alpha = event.alpha ? event.alpha.toFixed(1) : 0;
+            sensorData.beta = event.beta ? event.beta.toFixed(1) : 0;
+            sensorData.gamma = event.gamma ? event.gamma.toFixed(1) : 0;
+
+            // Actualizar UI de sensores
+            valAlpha.innerText = sensorData.alpha;
+            valBeta.innerText = sensorData.beta;
+            valGamma.innerText = sensorData.gamma;
+        }
+
+        function startGame() {
+            gameActive = true;
+            overlay.style.display = 'none';
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            if (gameActive) {
+                // --- Lógica de Movimiento ---
+                
+                // 1. Giro (Gamma)
+                // En modo Portrait (vertical), gamma es el giro lateral.
+                // Si el usuario pone el móvil en horizontal (Landscape), los ejes pueden cambiar.
+                // Aquí asumimos modo vertical para simplificar o calculamos el ángulo.
+                let steering = sensorData.gamma / 45; // Normalizar (-1 a 1 aprox)
+                car.position.x -= steering * speed * delta * 0.5;
+                car.rotation.y = steering * 0.5; // Inclinación visual del coche
+                car.rotation.z = -steering * 0.2;
+
+                // 2. Aceleración (Beta)
+                // Si inclinas hacia adelante (beta aumenta o disminuye según como sujetes)
+                // Calibramos: supongamos que 45 grados es reposo cómodo.
+                let targetSpeed = 0;
+                let tilt = sensorData.beta;
+                
+                // Lógica simple: si inclinas más de 20 grados hacia adelante, acelera
+                if (tilt > 30) {
+                    targetSpeed = (tilt - 30) * 2; 
+                } else if (tilt < 10) {
+                    targetSpeed = 0; // Frenado
+                }
+                
+                // Suavizado de velocidad
+                speed += (targetSpeed - speed) * delta * 2;
+                if (speed < 0) speed = 0;
+                if (speed > 100) speed = 100;
+
+                // Limites de pista
+                if (car.position.x > 8) car.position.x = 8;
+                if (car.position.x < -8) car.position.x = -8;
+
+                // Mover el mundo
+                car.position.z -= speed * delta;
+                
+                // Seguir con la cámara
+                camera.position.z = car.position.z + 5;
+                camera.position.x = car.position.x * 0.5;
+                camera.lookAt(car.position.x, 0, car.position.z - 10);
+
+                // Obstáculos y Colisiones
+                obstacles.forEach(obs => {
+                    // Si el obstáculo queda atrás, resetearlo adelante
+                    if (obs.position.z > car.position.z + 10) {
+                        resetObstacle(obs);
+                        score += 10;
+                    }
+
+                    // Colisión simple por distancia
+                    let dist = car.position.distanceTo(obs.position);
+                    if (dist < 1.5) {
+                        speed = 0;
+                        score = Math.max(0, score - 5);
+                        obs.material.color.set(0xff0000);
+                        setTimeout(() => obs.material.color.set(0x0077ff), 500);
+                    }
+                });
+
+                // Actualizar UI
+                speedUi.innerText = Math.floor(speed);
+                scoreUi.innerText = score;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Iniciar
+        startBtn.addEventListener('click', requestPermissions);
+        init();
+
+    </script>
+</body>
+</html>
