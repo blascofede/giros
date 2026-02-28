@@ -3,24 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gyro Racer 3D</title>
+    <title>Gyro Racer 3D - Edición Brave</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
+            background: rgba(0,0,0,0.9); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 100;
             color: white; text-align: center; padding: 20px;
         }
         #hud {
             position: absolute; top: 20px; left: 20px; color: #0f0;
             font-family: 'Courier New', Courier, monospace; pointer-events: none;
-            text-shadow: 2px 2px #000;
+            text-shadow: 2px 2px #000; z-index: 50;
         }
-        .sensor-val { font-size: 0.8rem; color: #aaa; }
+        .sensor-val { font-size: 0.7rem; color: #888; }
+        #debug-panel {
+            position: absolute; bottom: 10px; right: 10px; 
+            background: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px;
+            font-size: 10px; color: #ff0; pointer-events: none;
+        }
+        .warning-box {
+            background: #4a1a1a; border: 1px solid #ff4444; 
+            padding: 15px; border-radius: 10px; margin-top: 20px; display: none;
+        }
     </style>
 </head>
 <body>
@@ -28,255 +37,222 @@
     <div id="hud">
         <div class="text-2xl font-bold">VELOCIDAD: <span id="speed-ui">0</span> KM/H</div>
         <div class="text-xl">PUNTOS: <span id="score-ui">0</span></div>
-        <div class="mt-4">
-            <div class="sensor-val">Alpha (Brújula): <span id="val-alpha">0</span>°</div>
-            <div class="sensor-val">Beta (Inclinación): <span id="val-beta">0</span>°</div>
-            <div class="sensor-val">Gamma (Volante): <span id="val-gamma">0</span>°</div>
-        </div>
+    </div>
+
+    <div id="debug-panel">
+        Sensors: <span id="status-sensor">Esperando...</span><br>
+        A: <span id="val-alpha">0</span> | B: <span id="val-beta">0</span> | G: <span id="val-gamma">0</span>
     </div>
 
     <div id="overlay">
-        <h1 class="text-4xl font-bold mb-4">GYRO RACER 3D</h1>
-        <p class="mb-6 max-w-xs">Gira el móvil como un volante para cruzar el tráfico. Inclina adelante para acelerar.</p>
-        <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-xl transition-transform active:scale-95">
-            INICIAR CARRERA
+        <h1 class="text-4xl font-bold mb-4 text-blue-400">GYRO RACER 3D</h1>
+        <p class="mb-6 max-w-xs text-gray-300">Usa tu celular como un volante real.</p>
+        
+        <button id="start-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-full text-xl shadow-lg transition-transform active:scale-95">
+            CONECTAR SENSORES Y EMPEZAR
         </button>
-        <p class="mt-4 text-sm text-gray-400">Requiere acceso al acelerómetro/giroscopio</p>
+
+        <div id="brave-warning" class="warning-box max-w-sm">
+            <p class="font-bold text-red-400 mb-2">¡Atención usuarios de Brave!</p>
+            <p class="text-sm">Si los números de arriba no cambian al mover el móvil:</p>
+            <ol class="text-xs text-left mt-2 list-decimal ml-4 space-y-1">
+                <li>Haz clic en el icono de <b>León (Shields)</b> en la barra de direcciones.</li>
+                <li>Desactiva temporalmente los escudos o cambia "Protección contra huellas digitales" a estándar.</li>
+                <li>Asegúrate de estar en <b>HTTPS</b>.</li>
+            </ol>
+        </div>
     </div>
 
     <script>
-        // Variables de Juego
         let scene, camera, renderer, car, road, clock;
         let obstacles = [];
         let speed = 0;
         let score = 0;
         let gameActive = false;
-        
-        // Datos de Sensores
+        let sensorActive = false;
         let sensorData = { alpha: 0, beta: 0, gamma: 0 };
         
-        // Elementos UI
         const speedUi = document.getElementById('speed-ui');
         const scoreUi = document.getElementById('score-ui');
         const overlay = document.getElementById('overlay');
         const startBtn = document.getElementById('start-btn');
-        
-        const valAlpha = document.getElementById('val-alpha');
-        const valBeta = document.getElementById('val-beta');
-        const valGamma = document.getElementById('val-gamma');
+        const braveWarning = document.getElementById('brave-warning');
+        const statusSensor = document.getElementById('status-sensor');
 
-        // Inicialización
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x111122);
-            scene.fog = new THREE.Fog(0x111122, 20, 100);
+            scene.background = new THREE.Color(0x050510);
+            scene.fog = new THREE.Fog(0x050510, 20, 150);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
-            // Luces
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
             scene.add(ambientLight);
-            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-            sun.position.set(5, 10, 5);
-            scene.add(sun);
+            const spot = new THREE.SpotLight(0xffffff, 1);
+            spot.position.set(0, 10, 10);
+            scene.add(spot);
 
-            // Suelo / Carretera
-            const roadGeo = new THREE.PlaneGeometry(20, 1000);
-            const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+            // Carretera
+            const roadGeo = new THREE.PlaneGeometry(15, 2000);
+            const roadMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
             road = new THREE.Mesh(roadGeo, roadMat);
             road.rotation.x = -Math.PI / 2;
             scene.add(road);
 
-            // Líneas de la carretera
-            const lineGeo = new THREE.PlaneGeometry(0.2, 1000);
-            const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
-            const lineLeft = new THREE.Mesh(lineGeo, lineMat);
-            lineLeft.position.set(-3, 0.01, 0);
-            lineLeft.rotation.x = -Math.PI / 2;
-            scene.add(lineLeft);
-
-            const lineRight = new THREE.Mesh(lineGeo, lineMat);
-            lineRight.position.set(3, 0.01, 0);
-            lineRight.rotation.x = -Math.PI / 2;
-            scene.add(lineRight);
-
-            // Coche del Jugador
+            // Coche
             const carGroup = new THREE.Group();
-            
-            // Cuerpo
-            const bodyGeo = new THREE.BoxGeometry(1, 0.5, 2);
-            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1, 0.5, 2), new THREE.MeshStandardMaterial({ color: 0x00ffcc }));
             carGroup.add(body);
-
-            // Techo
-            const cabinGeo = new THREE.BoxGeometry(0.8, 0.4, 1);
-            const cabinMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-            const cabin = new THREE.Mesh(cabinGeo, cabinMat);
-            cabin.position.y = 0.45;
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.8), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+            cabin.position.set(0, 0.4, -0.2);
             carGroup.add(cabin);
-
+            
             car = carGroup;
             car.position.y = 0.3;
             scene.add(car);
 
-            // Posición de cámara inicial
-            camera.position.set(0, 3, 5);
-            camera.lookAt(car.position);
-
-            clock = new THREE.Clock();
-            
-            window.addEventListener('resize', onWindowResize, false);
-            
             spawnObstacles();
             animate();
+            
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
         }
 
         function spawnObstacles() {
-            for(let i = 0; i < 20; i++) {
-                const obsGeo = new THREE.BoxGeometry(1.2, 0.8, 2);
-                const obsMat = new THREE.MeshStandardMaterial({ color: 0x0077ff });
-                const obs = new THREE.Mesh(obsGeo, obsMat);
+            for(let i = 0; i < 15; i++) {
+                const obs = new THREE.Mesh(
+                    new THREE.BoxGeometry(1.5, 1, 3), 
+                    new THREE.MeshStandardMaterial({ color: 0xff3300 })
+                );
                 resetObstacle(obs);
-                obs.position.z = -i * 30 - 20;
+                obs.position.z = -i * 40 - 30;
                 scene.add(obs);
                 obstacles.push(obs);
             }
         }
 
         function resetObstacle(obs) {
-            obs.position.z = car.position.z - 200 - (Math.random() * 100);
-            obs.position.x = (Math.random() - 0.5) * 10;
+            obs.position.z = car.position.z - 250 - (Math.random() * 100);
+            obs.position.x = (Math.random() - 0.5) * 12;
         }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        // Permisos y Sensores
         async function requestPermissions() {
+            // Caso iOS Safari
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
                     const permission = await DeviceOrientationEvent.requestPermission();
                     if (permission === 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation);
-                        startGame();
+                        activateSensors();
                     } else {
-                        alert("Permiso denegado para acceder a los sensores.");
+                        statusSensor.innerText = "Permiso denegado";
                     }
-                } catch (error) {
-                    console.error(error);
+                } catch (e) {
+                    statusSensor.innerText = "Error permisos";
                 }
             } else {
-                // Navegadores que no requieren permiso explícito (Android)
-                window.addEventListener('deviceorientation', handleOrientation);
-                startGame();
+                // Caso Android / Brave / Chrome
+                activateSensors();
             }
+            
+            // Verificar si recibimos datos después de 1 segundo
+            setTimeout(() => {
+                if (!sensorActive) {
+                    braveWarning.style.display = 'block';
+                    statusSensor.innerText = "BLOQUEADO POR BROWSER";
+                    statusSensor.style.color = "#ff4444";
+                } else {
+                    startGame();
+                }
+            }, 1000);
         }
 
-        function handleOrientation(event) {
-            // Gamma: Inclinación lateral (izquierda/derecha) -> Volante
-            // Beta: Inclinación longitudinal (adelante/atrás) -> Aceleración
-            // Alpha: Rotación sobre el eje Z (norte magnético) -> Orientación
-            
-            sensorData.alpha = event.alpha ? event.alpha.toFixed(1) : 0;
-            sensorData.beta = event.beta ? event.beta.toFixed(1) : 0;
-            sensorData.gamma = event.gamma ? event.gamma.toFixed(1) : 0;
+        function activateSensors() {
+            window.addEventListener('deviceorientation', (event) => {
+                if (event.beta !== null) {
+                    sensorActive = true;
+                    statusSensor.innerText = "OK (Recibiendo)";
+                    statusSensor.style.color = "#0f0";
+                    
+                    sensorData.alpha = event.alpha || 0;
+                    sensorData.beta = event.beta || 0;
+                    sensorData.gamma = event.gamma || 0;
 
-            // Actualizar UI de sensores
-            valAlpha.innerText = sensorData.alpha;
-            valBeta.innerText = sensorData.beta;
-            valGamma.innerText = sensorData.gamma;
+                    document.getElementById('val-alpha').innerText = Math.floor(sensorData.alpha);
+                    document.getElementById('val-beta').innerText = Math.floor(sensorData.beta);
+                    document.getElementById('val-gamma').innerText = Math.floor(sensorData.gamma);
+                }
+            }, true);
         }
 
         function startGame() {
             gameActive = true;
             overlay.style.display = 'none';
+            clock = new THREE.Clock();
         }
 
         function animate() {
             requestAnimationFrame(animate);
+            if (!gameActive) {
+                renderer.render(scene, camera);
+                return;
+            }
+
             const delta = clock.getDelta();
 
-            if (gameActive) {
-                // --- Lógica de Movimiento ---
-                
-                // 1. Giro (Gamma)
-                // En modo Portrait (vertical), gamma es el giro lateral.
-                // Si el usuario pone el móvil en horizontal (Landscape), los ejes pueden cambiar.
-                // Aquí asumimos modo vertical para simplificar o calculamos el ángulo.
-                let steering = sensorData.gamma / 45; // Normalizar (-1 a 1 aprox)
-                car.position.x -= steering * speed * delta * 0.5;
-                car.rotation.y = steering * 0.5; // Inclinación visual del coche
-                car.rotation.z = -steering * 0.2;
+            // Lógica de conducción
+            // Gamma: Inclinación lateral (volante)
+            let steering = sensorData.gamma / 40; 
+            car.position.x -= steering * speed * delta * 0.6;
+            car.rotation.y = steering * 0.4;
+            car.rotation.z = -steering * 0.3;
 
-                // 2. Aceleración (Beta)
-                // Si inclinas hacia adelante (beta aumenta o disminuye según como sujetes)
-                // Calibramos: supongamos que 45 grados es reposo cómodo.
-                let targetSpeed = 0;
-                let tilt = sensorData.beta;
-                
-                // Lógica simple: si inclinas más de 20 grados hacia adelante, acelera
-                if (tilt > 30) {
-                    targetSpeed = (tilt - 30) * 2; 
-                } else if (tilt < 10) {
-                    targetSpeed = 0; // Frenado
+            // Beta: Inclinación frontal (acelerador)
+            // Calibramos para que a 45 grados esté en reposo y a 70 acelere
+            let tilt = sensorData.beta;
+            let targetSpeed = 0;
+            if (tilt > 35) targetSpeed = (tilt - 35) * 3;
+            if (tilt < 20) targetSpeed = 0; // Freno
+
+            speed += (targetSpeed - speed) * delta * 1.5;
+            speed = Math.max(0, Math.min(speed, 120));
+
+            // Limites
+            car.position.x = Math.max(-6.5, Math.min(6.5, car.position.x));
+            car.position.z -= speed * delta;
+
+            // Cámara
+            camera.position.z = car.position.z + 6;
+            camera.position.x = car.position.x * 0.7;
+            camera.position.y = 3;
+            camera.lookAt(car.position.x, 0.5, car.position.z - 15);
+
+            // Obstáculos
+            obstacles.forEach(obs => {
+                if (obs.position.z > car.position.z + 10) {
+                    resetObstacle(obs);
+                    score += 10;
                 }
-                
-                // Suavizado de velocidad
-                speed += (targetSpeed - speed) * delta * 2;
-                if (speed < 0) speed = 0;
-                if (speed > 100) speed = 100;
+                if (car.position.distanceTo(obs.position) < 1.8) {
+                    speed *= 0.5;
+                    score = Math.max(0, score - 1);
+                }
+            });
 
-                // Limites de pista
-                if (car.position.x > 8) car.position.x = 8;
-                if (car.position.x < -8) car.position.x = -8;
-
-                // Mover el mundo
-                car.position.z -= speed * delta;
-                
-                // Seguir con la cámara
-                camera.position.z = car.position.z + 5;
-                camera.position.x = car.position.x * 0.5;
-                camera.lookAt(car.position.x, 0, car.position.z - 10);
-
-                // Obstáculos y Colisiones
-                obstacles.forEach(obs => {
-                    // Si el obstáculo queda atrás, resetearlo adelante
-                    if (obs.position.z > car.position.z + 10) {
-                        resetObstacle(obs);
-                        score += 10;
-                    }
-
-                    // Colisión simple por distancia
-                    let dist = car.position.distanceTo(obs.position);
-                    if (dist < 1.5) {
-                        speed = 0;
-                        score = Math.max(0, score - 5);
-                        obs.material.color.set(0xff0000);
-                        setTimeout(() => obs.material.color.set(0x0077ff), 500);
-                    }
-                });
-
-                // Actualizar UI
-                speedUi.innerText = Math.floor(speed);
-                scoreUi.innerText = score;
-            }
+            speedUi.innerText = Math.floor(speed);
+            scoreUi.innerText = score;
 
             renderer.render(scene, camera);
         }
 
-        // Iniciar
         startBtn.addEventListener('click', requestPermissions);
         init();
-
     </script>
 </body>
 </html>
