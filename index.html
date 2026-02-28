@@ -3,27 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gyro Racer 3D - Ultimate Compatibility</title>
+    <title>Gyro Ruta 3D - Simulador</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; touch-action: none; }
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9); display: flex; flex-direction: column;
+            background: rgba(0,0,0,0.85); display: flex; flex-direction: column;
             justify-content: center; align-items: center; z-index: 100;
             color: white; text-align: center; padding: 20px;
         }
         #hud {
-            position: absolute; top: 20px; left: 20px; color: #0f0;
+            position: absolute; top: 20px; left: 20px; color: white;
             font-family: 'Courier New', Courier, monospace; pointer-events: none;
-            text-shadow: 2px 2px #000; z-index: 50;
+            text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+            z-index: 50; width: 100%;
+        }
+        #feedback-msg {
+            position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+            font-size: 1.5rem; font-weight: bold; text-shadow: 2px 2px #000;
+            opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 60;
         }
         #debug-panel {
             position: absolute; bottom: 10px; right: 10px; 
             background: rgba(0,0,0,0.7); padding: 8px; border-radius: 8px;
-            font-size: 11px; color: #fff; pointer-events: none; border: 1px solid #444;
+            font-size: 11px; color: #fff; pointer-events: none; border: 1px solid #444; z-index: 50;
         }
         .warning-step { background: rgba(255,255,255,0.1); padding: 10px; border-radius: 8px; margin-bottom: 8px; text-align: left; width: 100%; }
         #touch-controls {
@@ -36,11 +42,12 @@
 <body>
 
     <div id="hud">
-        <div class="text-2xl font-bold">VELOCIDAD: <span id="speed-ui">0</span> KM/H</div>
-        <div class="text-xl">PUNTOS: <span id="score-ui">0</span></div>
+        <div class="text-3xl font-bold text-yellow-400">PUNTOS: <span id="score-ui">0</span></div>
+        <div class="text-xl mt-1">VELOCIDAD: <span id="speed-ui">0</span> KM/H</div>
     </div>
+    
+    <div id="feedback-msg">¡BIEN PASADO! +20</div>
 
-    <!-- Controles táctiles de emergencia si el sensor falla -->
     <div id="touch-controls">
         <div class="touch-zone" id="touch-left"></div>
         <div class="touch-zone" id="touch-right"></div>
@@ -49,11 +56,12 @@
     <div id="debug-panel">
         <div id="https-status">Protocolo: ...</div>
         <div id="sensor-status">Sensores: Esperando...</div>
-        <div>A: <span id="val-alpha">0</span> | B: <span id="val-beta">0</span> | G: <span id="val-gamma">0</span></div>
+        <div>Línea Amarilla: <span id="val-unsafe">No</span></div>
     </div>
 
     <div id="overlay">
-        <h1 class="text-4xl font-bold mb-4 text-blue-400">GYRO RACER 3D</h1>
+        <h1 class="text-4xl font-bold mb-2 text-blue-400">RUTA 3D</h1>
+        <h2 class="text-xl mb-6 text-yellow-300">Conducción Realista</h2>
         
         <div id="setup-view" class="w-full max-w-sm">
             <div class="warning-step" id="https-warning" style="display:none;">
@@ -61,39 +69,54 @@
                 <p class="text-xs">Los sensores están bloqueados en sitios no seguros. Usa una URL HTTPS.</p>
             </div>
 
-            <p class="mb-6 text-gray-300">Inclina tu dispositivo para conducir.</p>
+            <div class="bg-gray-800 p-4 rounded-xl text-sm text-left mb-6 border border-gray-600">
+                <p class="font-bold text-white mb-2">Misión del Chofer:</p>
+                <ul class="list-disc pl-5 space-y-1 text-gray-300">
+                    <li>Manejas un micro de larga distancia. Eres más ancho de lo normal.</li>
+                    <li>Adelanta a los autos lentos por la <b>izquierda</b>.</li>
+                    <li>Cuidado con el tráfico que viene de frente.</li>
+                    <li><b>REGLA DE ORO:</b> Prohibido adelantar con <b>Doble Línea Amarilla</b> (curvas o lomas ciegas).</li>
+                </ul>
+            </div>
             
-            <button id="start-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-10 rounded-xl text-xl shadow-lg mb-4">
-                CONECTAR SENSORES
+            <button id="start-btn" class="w-full bg-blue-600 hover:bg-green-600 text-white font-bold py-4 px-10 rounded-xl text-xl shadow-lg transition-colors mb-4">
+                ARRANCAR MOTOR
             </button>
 
             <div class="text-left text-xs text-gray-400 space-y-2">
                 <p><b>Brave Tips:</b></p>
                 <p>1. Clic en León (Shields) → Desactiva "Protección de huellas".</p>
-                <p>2. Ajustes → Privacidad → Sensores → Permitir.</p>
+                <p>2. Configuración > Configuración de Sitios > Sensores de movimiento > PERMITIR.</p>
             </div>
         </div>
 
         <div id="loading-view" style="display:none;">
-            <p class="text-xl animate-pulse">Sincronizando giroscopio...</p>
-            <p class="text-sm text-gray-500 mt-4">Si no detectamos movimiento en 3 segundos, activaremos el control táctil.</p>
+            <p class="text-xl animate-pulse">Sincronizando volante...</p>
         </div>
     </div>
 
     <script>
         let scene, camera, renderer, car, clock;
-        let obstacles = [];
+        let roadGeo, grassGeo;
+        let centerLines = [];
+        let trees = [];
+        let traffic = [];
+        
+        // Físicas y Lógica
+        let playerLogicalZ = 0; // Posición lógica en la ruta infinita (negativa hacia adelante)
+        let playerLogicalX = 3.5; // Carril derecho por defecto
         let speed = 0, score = 0;
         let gameActive = false, sensorActive = false;
         let sensorData = { alpha: 0, beta: 0, gamma: 0 };
-        let touchSteer = 0; // -1 a 1 para control táctil de emergencia
+        let touchSteer = 0; 
+        
+        // Materiales compartidos
+        const matAsphalt = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 });
+        const matGrass = new THREE.MeshStandardMaterial({ color: 0x2d6a4f, roughness: 1.0 });
+        const matDashedWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const matDoubleYellow = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
 
-        // UI Elements
-        const overlay = document.getElementById('overlay');
-        const setupView = document.getElementById('setup-view');
-        const loadingView = document.getElementById('loading-view');
-        const startBtn = document.getElementById('start-btn');
-        const statusText = document.getElementById('sensor-status');
+        const feedbackMsg = document.getElementById('feedback-msg');
 
         function checkHTTPS() {
             const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -102,174 +125,368 @@
             return isSecure;
         }
 
+        // Función matemática principal: Define la forma de la ruta en cualquier punto Z
+        function getTrackInfo(z) {
+            const zScaled = z * 0.003;
+            // Curvas suaves combinando ondas
+            const x = Math.sin(zScaled) * 50 + Math.sin(zScaled * 0.4) * 30;
+            // Lomas y bajadas
+            const y = Math.sin(zScaled * 1.5) * 12 + Math.cos(zScaled * 0.7) * 8;
+            
+            // Derivadas para calcular pendiente y curvatura
+            const dx = Math.cos(zScaled) * 50 * 0.003 + Math.cos(zScaled * 0.4) * 30 * 0.0012;
+            const dy = Math.cos(zScaled * 1.5) * 12 * 0.0045 - Math.sin(zScaled * 0.7) * 8 * 0.0021;
+            
+            // Si la curva es muy cerrada o hay una bajada ciega repentina, es zona insegura (Doble Amarilla)
+            const isUnsafe = Math.abs(dx) > 0.09 || dy < -0.025;
+
+            return { x, y, dx, dy, isUnsafe };
+        }
+
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0a0a1a);
-            scene.fog = new THREE.Fog(0x0a0a1a, 20, 160);
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 40, 250);
 
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 800);
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-            sun.position.set(5, 10, 5);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(10, 30, 20);
             scene.add(sun);
 
-            // Carretera infinita (visual)
-            const roadGeo = new THREE.PlaneGeometry(15, 2000);
-            const roadMat = new THREE.MeshStandardMaterial({ color: 0x151515 });
-            const road = new THREE.Mesh(roadGeo, roadMat);
-            road.rotation.x = -Math.PI / 2;
+            // Generar Malla de Ruta Dinámica
+            // 16m ancho, 1000m largo. 100 segmentos.
+            roadGeo = new THREE.PlaneGeometry(16, 1000, 1, 100);
+            roadGeo.translate(0, 500, 0); // Ajustar pivote
+            roadGeo.rotateX(-Math.PI / 2); // Acostar plano
+            const road = new THREE.Mesh(roadGeo, matAsphalt);
             scene.add(road);
 
-            // Coche simple
+            // Generar Malla de Pasto Dinámica
+            grassGeo = new THREE.PlaneGeometry(300, 1000, 1, 100);
+            grassGeo.translate(0, 500, 0);
+            grassGeo.rotateX(-Math.PI / 2);
+            const grass = new THREE.Mesh(grassGeo, matGrass);
+            grass.position.y = -0.1;
+            scene.add(grass);
+
+            // Líneas centrales dinámicas
+            const lineGeom = new THREE.PlaneGeometry(0.5, 5);
+            lineGeom.rotateX(-Math.PI / 2);
+            for (let i = 0; i < 60; i++) {
+                let line = new THREE.Mesh(lineGeom, matDashedWhite);
+                centerLines.push(line);
+                scene.add(line);
+            }
+
+            // Crear Colectivo del Jugador
             car = new THREE.Group();
-            const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 2.5), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
-            car.add(body);
-            const glass = new THREE.Mesh(new THREE.BoxGeometry(1, 0.4, 1), new THREE.MeshStandardMaterial({ color: 0x000000 }));
-            glass.position.set(0, 0.4, -0.2);
-            car.add(glass);
-            car.position.y = 0.4;
+            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.8, 8), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
+            busBody.position.y = 1.9;
+            car.add(busBody);
+            const busStripe = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.5, 8.01), new THREE.MeshStandardMaterial({ color: 0x1d4ed8 }));
+            busStripe.position.y = 1.5;
+            car.add(busStripe);
+            const busGlass = new THREE.Mesh(new THREE.BoxGeometry(2.42, 1.2, 7.8), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 }));
+            busGlass.position.y = 2.8;
+            car.add(busGlass);
             scene.add(car);
 
-            for(let i=0; i<12; i++) {
-                const obs = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 3), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
-                obs.position.z = -i * 40 - 50;
-                obs.position.x = (Math.random() - 0.5) * 10;
-                obstacles.push(obs);
-                scene.add(obs);
+            // Árboles
+            const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 2);
+            const leavesGeo = new THREE.ConeGeometry(2.5, 6, 7);
+            const matTrunk = new THREE.MeshStandardMaterial({ color: 0x5c4033 });
+            const matLeaves = new THREE.MeshStandardMaterial({ color: 0x1b4332 });
+            for(let i=0; i<40; i++) {
+                let tree = new THREE.Group();
+                let trunk = new THREE.Mesh(trunkGeo, matTrunk);
+                trunk.position.y = 1;
+                let leaves = new THREE.Mesh(leavesGeo, matLeaves);
+                leaves.position.y = 4;
+                tree.add(trunk);
+                tree.add(leaves);
+                
+                // Propiedades lógicas
+                tree.userData = {
+                    logicalZ: -Math.random() * 1000,
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (12 + Math.random() * 30)
+                };
+                scene.add(tree);
+                trees.push(tree);
             }
 
             checkHTTPS();
             animate();
         }
 
-        async function attemptActivation() {
-            setupView.style.display = 'none';
-            loadingView.style.display = 'block';
-
-            // Intentar con el evento estándar
-            window.addEventListener('deviceorientation', updateSensors, true);
+        function createTrafficCar(lane, zOffset) {
+            const group = new THREE.Group();
             
-            // Intentar con el evento absoluto (a veces Brave lo prefiere)
-            window.addEventListener('deviceorientationabsolute', updateSensors, true);
+            // Modelos de auto variados
+            const colors = [0xff0000, 0x0000ff, 0xc0c0c0, 0x00ff00, 0xffffff];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 4), new THREE.MeshStandardMaterial({ color: color }));
+            body.position.y = 0.6;
+            group.add(body);
 
-            // Para iOS específicamente
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    const response = await DeviceOrientationEvent.requestPermission();
-                    if (response !== 'granted') statusText.innerText = "iOS: Permiso denegado";
-                } catch (e) {
-                    statusText.innerText = "Error permisos iOS";
-                }
+            // Luces (Rojas atrás si van en nuestro sentido, Blancas adelante si vienen en contra)
+            const lightGeo = new THREE.BoxGeometry(1.6, 0.2, 0.2);
+            let lightMat;
+            if (lane === 1) { // Va hacia adelante (Luz roja trasera nos mira)
+                lightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const light = new THREE.Mesh(lightGeo, lightMat);
+                light.position.set(0, 0.6, 1.95); // Parte de atrás
+                group.add(light);
+            } else { // Viene hacia nosotros (Luz blanca delantera nos mira)
+                lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                const light = new THREE.Mesh(lightGeo, lightMat);
+                light.position.set(0, 0.6, 1.95); // Frente (giraremos el auto entero)
+                group.add(light);
             }
 
-            // Timeout de 3 segundos: Si no hay sensor, activar touch
+            group.userData = {
+                logicalZ: playerLogicalZ - zOffset,
+                lane: lane,
+                speed: lane === 1 ? 40 : -70, // Positivo va con nosotros, negativo viene
+                overtaken: false
+            };
+            
+            scene.add(group);
+            traffic.push(group);
+        }
+
+        function spawnTrafficInitial() {
+            // Autos lentos carril derecho
+            createTrafficCar(1, 150);
+            createTrafficCar(1, 350);
+            createTrafficCar(1, 600);
+            
+            // Autos rápidos carril izquierdo (vienen)
+            createTrafficCar(-1, 800);
+            createTrafficCar(-1, 1200);
+        }
+
+        function showFeedback(text, isError) {
+            feedbackMsg.innerText = text;
+            feedbackMsg.style.color = isError ? '#ff4444' : '#4ade80';
+            feedbackMsg.style.opacity = 1;
+            setTimeout(() => { feedbackMsg.style.opacity = 0; }, 1500);
+        }
+
+        async function attemptActivation() {
+            document.getElementById('setup-view').style.display = 'none';
+            document.getElementById('loading-view').style.display = 'block';
+
+            window.addEventListener('deviceorientation', updateSensors, true);
+            window.addEventListener('deviceorientationabsolute', updateSensors, true);
+
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    await DeviceOrientationEvent.requestPermission();
+                } catch (e) { console.error(e); }
+            }
+
             setTimeout(() => {
                 if (!sensorActive) {
-                    console.log("Activando modo de emergencia (Touch)");
-                    statusText.innerText = "Modo: TÁCTIL (Sensor falló)";
-                    statusText.style.color = "#fbbf24";
+                    document.getElementById('sensor-status').innerText = "Modo: TÁCTIL";
                     document.getElementById('touch-controls').style.display = 'block';
                     initTouchEvents();
                 }
                 startGame();
-            }, 3000);
+            }, 2000);
         }
 
         function updateSensors(event) {
             if (event.beta === null && event.gamma === null) return;
-            
             sensorActive = true;
-            statusText.innerText = "Giroscopio: ACTIVO";
-            statusText.style.color = "#4ade80";
+            document.getElementById('sensor-status').innerText = "Sensor ACTIVO";
             
             sensorData.alpha = event.alpha || 0;
             sensorData.beta = event.beta || 0;
             sensorData.gamma = event.gamma || 0;
-
-            document.getElementById('val-alpha').innerText = Math.floor(sensorData.alpha);
-            document.getElementById('val-beta').innerText = Math.floor(sensorData.beta);
-            document.getElementById('val-gamma').innerText = Math.floor(sensorData.gamma);
         }
 
         function initTouchEvents() {
             const left = document.getElementById('touch-left');
             const right = document.getElementById('touch-right');
-            
-            const startLeft = () => touchSteer = 1;
-            const startRight = () => touchSteer = -1;
+            const startLeft = () => touchSteer = -1;
+            const startRight = () => touchSteer = 1;
             const stop = () => touchSteer = 0;
 
-            left.ontouchstart = startLeft;
-            left.ontouchend = stop;
-            right.ontouchstart = startRight;
-            right.ontouchend = stop;
-            // Soporte mouse para debug
-            left.onmousedown = startLeft;
-            left.onmouseup = stop;
-            right.onmousedown = startRight;
-            right.onmouseup = stop;
+            left.ontouchstart = startLeft; left.ontouchend = stop;
+            right.ontouchstart = startRight; right.ontouchend = stop;
+            left.onmousedown = startLeft; left.onmouseup = stop;
+            right.onmousedown = startRight; right.onmouseup = stop;
         }
 
         function startGame() {
             gameActive = true;
-            overlay.style.display = 'none';
+            document.getElementById('overlay').style.display = 'none';
             clock = new THREE.Clock();
+            spawnTrafficInitial();
+        }
+
+        // Función para doblar la malla de la ruta y el pasto
+        function updateGeometryVertices(geo, width) {
+            const pos = geo.attributes.position;
+            // 100 segmentos = 101 filas de vértices
+            for (let i = 0; i <= 100; i++) {
+                let visualZ = - (i / 100) * 1000;
+                let logicalZ = playerLogicalZ + visualZ;
+                let info = getTrackInfo(logicalZ);
+                
+                let idxLeft = i * 2;
+                let idxRight = i * 2 + 1;
+                
+                pos.setXYZ(idxLeft, -(width/2) + info.x, info.y, visualZ);
+                pos.setXYZ(idxRight,  (width/2) + info.x, info.y, visualZ);
+            }
+            pos.needsUpdate = true;
         }
 
         function animate() {
             requestAnimationFrame(animate);
-            if (!gameActive) {
-                if(renderer) renderer.render(scene, camera);
-                return;
-            }
+            if (!gameActive) { if(renderer) renderer.render(scene, camera); return; }
 
             const delta = clock.getDelta();
             
-            // Lógica de Giro: Prioridad Sensor > Touch
-            let steering = 0;
+            // --- Lógica de Controles ---
+            let targetLaneX = 3.5; // Carril derecho por defecto
             if (sensorActive) {
-                steering = sensorData.gamma / 35; // Rango volante
+                // Gamma > 0 es inclinar a la derecha. Queremos que el rango sea de -4 a 4.
+                targetLaneX = (sensorData.gamma / 30) * 5; 
             } else {
-                steering = touchSteer;
-            }
-
-            // Lógica Velocidad: Prioridad Sensor > Auto-acelerar
-            let tilt = sensorData.beta;
-            let targetSpeed = 60; // Velocidad base si no hay sensor
-            if (sensorActive) {
-                if (tilt > 30) targetSpeed = (tilt - 30) * 4;
-                else if (tilt < 15) targetSpeed = 10;
+                targetLaneX = touchSteer * 4.5;
             }
             
+            // Suavizado del volante
+            playerLogicalX += (targetLaneX - playerLogicalX) * delta * 3;
+            playerLogicalX = Math.max(-4.5, Math.min(4.5, playerLogicalX));
+
+            // Velocidad
+            let tilt = sensorData.beta;
+            let targetSpeed = 70; // Velocidad de crucero base
+            if (sensorActive) {
+                if (tilt > 30) targetSpeed = 70 + (tilt - 30) * 2;
+                else if (tilt < 15) targetSpeed = 20; // Frenar al enderezar
+            }
             speed += (targetSpeed - speed) * delta;
-            speed = Math.max(5, Math.min(speed, 140));
+            speed = Math.max(0, Math.min(speed, 110)); // Limite de velocidad
 
-            // Aplicar movimiento
-            car.position.x -= steering * speed * delta * 0.7;
-            car.position.x = Math.max(-6, Math.min(6, car.position.x));
-            car.rotation.y = steering * 0.5;
-            car.rotation.z = -steering * 0.2;
-            car.position.z -= speed * delta;
+            // Avance del jugador
+            // Convertimos km/h a m/s (aprox dividir por 3.6)
+            playerLogicalZ -= (speed / 3.6) * delta * 2; 
 
-            // Cámara
-            camera.position.set(car.position.x * 0.5, 3.5, car.position.z + 7);
-            camera.lookAt(car.position.x, 0.5, car.position.z - 20);
+            let pInfo = getTrackInfo(playerLogicalZ);
+            document.getElementById('val-unsafe').innerText = pInfo.isUnsafe ? "SÍ" : "NO";
+            document.getElementById('val-unsafe').style.color = pInfo.isUnsafe ? "#ff0000" : "#00ff00";
 
-            // Obstáculos
-            obstacles.forEach(obs => {
-                if (obs.position.z > car.position.z + 10) {
-                    obs.position.z = car.position.z - 200 - Math.random()*50;
-                    obs.position.x = (Math.random() - 0.5) * 12;
-                    score += 10;
+            // --- Actualizar Mallas del Mundo ---
+            updateGeometryVertices(roadGeo, 16);
+            updateGeometryVertices(grassGeo, 300);
+
+            // --- Actualizar Líneas Centrales ---
+            centerLines.forEach((line, i) => {
+                let visualZ = -i * 12 - (Math.abs(playerLogicalZ) % 12);
+                let logicalZ = playerLogicalZ + visualZ;
+                let info = getTrackInfo(logicalZ);
+                let nextInfo = getTrackInfo(logicalZ - 5);
+                
+                line.position.set(info.x, info.y + 0.05, visualZ);
+                line.lookAt(nextInfo.x, nextInfo.y + 0.05, visualZ - 5);
+                
+                if (info.isUnsafe) {
+                    line.material = matDoubleYellow;
+                    line.scale.z = 2.5; // Casi continua
+                } else {
+                    line.material = matDashedWhite;
+                    line.scale.z = 1.0; // Punteada
                 }
-                if (car.position.distanceTo(obs.position) < 2) {
-                    speed *= 0.5;
-                    score = Math.max(0, score - 5);
+            });
+
+            // --- Actualizar Árboles ---
+            trees.forEach(tree => {
+                // Si el árbol quedó atrás, mandarlo adelante
+                if (tree.userData.logicalZ > playerLogicalZ + 50) {
+                    tree.userData.logicalZ = playerLogicalZ - 900 - Math.random() * 200;
+                }
+                let info = getTrackInfo(tree.userData.logicalZ);
+                let visualZ = tree.userData.logicalZ - playerLogicalZ;
+                tree.position.set(info.x + tree.userData.logicalX, info.y, visualZ);
+            });
+
+            // --- Posicionar al Jugador Visualmente ---
+            let nextPInfo = getTrackInfo(playerLogicalZ - 5);
+            car.position.set(pInfo.x + playerLogicalX, pInfo.y, 0);
+            car.lookAt(nextPInfo.x + playerLogicalX, nextPInfo.y, -5);
+
+            // Cámara sigue al micro
+            camera.position.set(pInfo.x + playerLogicalX * 0.3, pInfo.y + 6.5, 12);
+            camera.lookAt(car.position.x, car.position.y + 2, -20);
+
+            // --- Lógica del Tráfico y Misiones ---
+            traffic.forEach(t => {
+                // Mover tráfico
+                t.userData.logicalZ -= (t.userData.speed / 3.6) * delta * 2;
+                
+                // Reciclar tráfico si se aleja mucho
+                if (t.userData.logicalZ > playerLogicalZ + 100 || t.userData.logicalZ < playerLogicalZ - 1500) {
+                    // Reposicionar adelante
+                    t.userData.logicalZ = playerLogicalZ - 800 - Math.random() * 600;
+                    t.userData.overtaken = false; // Resetear bandera de adelantamiento
+                }
+
+                // Actualizar posición visual
+                let tInfo = getTrackInfo(t.userData.logicalZ);
+                let tNextInfo = getTrackInfo(t.userData.logicalZ - 5);
+                let visualZ = t.userData.logicalZ - playerLogicalZ;
+                
+                let laneX = t.userData.lane * 3.5; // -3.5 izq, 3.5 der
+                t.position.set(tInfo.x + laneX, tInfo.y, visualZ);
+                
+                // Orientación realista
+                if (t.userData.lane === 1) {
+                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ - 5);
+                } else {
+                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ + 5); // Mira hacia nosotros
+                }
+
+                // --- COLISIONES ---
+                let distZ = Math.abs(t.userData.logicalZ - playerLogicalZ);
+                let distX = Math.abs(laneX - playerLogicalX);
+                
+                // Cajas de colisión: Largo bus(8) + auto(4)/2 = 6. Ancho bus(2.4) + auto(1.8)/2 = 2.1
+                if (distZ < 6 && distX < 2.1) {
+                    speed *= 0.3; // Freno drástico por choque
+                    score = Math.max(0, score - 15);
+                    showFeedback("¡CHOQUE! -15", true);
+                    t.userData.logicalZ = playerLogicalZ + 50; // Mandar el auto chocado atrás
+                }
+
+                // --- SISTEMA DE ADELANTAMIENTO (LA MISIÓN) ---
+                if (t.userData.lane === 1 && !t.userData.overtaken) {
+                    // Si el jugador superó al auto
+                    if (playerLogicalZ < t.userData.logicalZ - 4) {
+                        t.userData.overtaken = true;
+                        
+                        // Verificar si estaba en el carril izquierdo (adelantando correctamente)
+                        if (playerLogicalX < 0) {
+                            // ¿Había doble línea amarilla?
+                            if (pInfo.isUnsafe) {
+                                score -= 10;
+                                showFeedback("¡INFRACCIÓN! LÍNEA AMARILLA -10", true);
+                            } else {
+                                score += 20;
+                                showFeedback("¡BUEN ADELANTAMIENTO! +20", false);
+                            }
+                        }
+                    }
                 }
             });
 
@@ -278,7 +495,7 @@
             renderer.render(scene, camera);
         }
 
-        startBtn.addEventListener('click', attemptActivation);
+        document.getElementById('start-btn').addEventListener('click', attemptActivation);
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
