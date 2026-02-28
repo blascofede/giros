@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gyro Ruta 3D - Simulador Pro Max</title>
+    <title>Gyro Ruta 3D - Simulador Ultra Realista</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: sans-serif; touch-action: none; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -61,7 +61,7 @@
 
     <div id="overlay">
         <h1 class="text-4xl font-bold mb-2 text-blue-400">RUTA 3D</h1>
-        <h2 class="text-xl mb-6 text-yellow-300">Conducción Realista (Con Sombras)</h2>
+        <h2 class="text-xl mb-6 text-yellow-300">Gráficos Ultra Realistas</h2>
         
         <div id="setup-view" class="w-full max-w-sm">
             <div class="warning-step" id="https-warning" style="display:none;">
@@ -89,7 +89,7 @@
     </div>
 
     <script>
-        let scene, camera, renderer, car, clock, sun;
+        let scene, camera, renderer, car, clock, sun, skySphere;
         let roadGeo, grassGeo, sideLineGeoL, sideLineGeoR;
         let mountains = [];
         let centerLines = [];
@@ -99,6 +99,7 @@
         let cows = [];
         let traffic = [];
         let clouds = [];
+        let myWheels = []; 
         
         // Físicas y Lógica
         let playerLogicalZ = 0; 
@@ -107,13 +108,90 @@
         let gameActive = false, sensorActive = false;
         let sensorData = { alpha: 0, beta: 0, gamma: 0 };
         let touchSteer = 0; 
-        
-        // Materiales mejorados para recibir sombras (Lambert)
-        const matAsphalt = new THREE.MeshLambertMaterial({ color: 0x666666, side: THREE.DoubleSide });
-        const matGrass = new THREE.MeshLambertMaterial({ color: 0x3d8c40, side: THREE.DoubleSide });
+        let suspensionPhase = 0; 
+
+        // ----- GENERADORES DE TEXTURAS PROCEDURALES -----
+        function createGrassTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#326829'; // Base oscura
+            ctx.fillRect(0, 0, 512, 512);
+            for(let i=0; i<30000; i++) {
+                ctx.fillStyle = Math.random() > 0.5 ? '#3d8c40' : '#4ca64c'; // Brillos y sombras
+                ctx.fillRect(Math.random()*512, Math.random()*512, 2, Math.random()*6+2);
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(100, 100); // Repetir mucho para escala real
+            return tex;
+        }
+
+        function createAsphaltTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#4a4a4a'; // Base gris
+            ctx.fillRect(0, 0, 512, 512);
+            for(let i=0; i<40000; i++) {
+                const val = Math.random() * 50 + 40; // Ruido gris
+                ctx.fillStyle = `rgb(${val},${val},${val})`;
+                ctx.fillRect(Math.random()*512, Math.random()*512, 1, 1);
+            }
+            // Agujeros oscuros
+            for(let i=0; i<500; i++) {
+                ctx.fillStyle = '#333333';
+                ctx.beginPath();
+                ctx.arc(Math.random()*512, Math.random()*512, Math.random()*2, 0, Math.PI*2);
+                ctx.fill();
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(10, 100);
+            return tex;
+        }
+
+        function createSkyTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 512);
+            grad.addColorStop(0, '#103970'); // Cenit azul oscuro
+            grad.addColorStop(0.4, '#488bdf'); // Medio
+            grad.addColorStop(0.6, '#9ac8eb'); // Bajo
+            grad.addColorStop(1, '#ffdfb3'); // Horizonte brillante
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 2, 512);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createSignTexture(text, isWarning) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = isWarning ? '#ffcc00' : '#ffffff';
+            ctx.fillRect(0, 0, 256, 256);
+            ctx.strokeStyle = isWarning ? '#000000' : '#ff0000';
+            ctx.lineWidth = 15;
+            ctx.strokeRect(10, 10, 236, 236);
+            ctx.fillStyle = '#000000';
+            ctx.font = 'bold 35px sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const lines = text.split('\n');
+            lines.forEach((line, i) => { ctx.fillText(line, 128, 128 - ((lines.length - 1) * 20) + (i * 45)); });
+            return new THREE.CanvasTexture(canvas);
+        }
+        // ------------------------------------------------
+
+        // Materiales mejorados con texturas
+        const texGrass = createGrassTexture();
+        const texAsphalt = createAsphaltTexture();
+        const matAsphalt = new THREE.MeshStandardMaterial({ map: texAsphalt, roughness: 0.9, side: THREE.DoubleSide });
+        const matGrass = new THREE.MeshStandardMaterial({ map: texGrass, roughness: 1.0, side: THREE.DoubleSide });
         const matDashedWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
         const matDoubleYellow = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
-        const matTire = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const matTire = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+        const matGlass = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.1, metalness: 0.8 });
 
         const feedbackMsg = document.getElementById('feedback-msg');
 
@@ -124,51 +202,90 @@
             return isSecure;
         }
 
-        function createSignTexture(text, isWarning) {
-            const canvas = document.createElement('canvas');
-            canvas.width = 256; canvas.height = 256;
-            const ctx = canvas.getContext('2d');
-            
-            ctx.fillStyle = isWarning ? '#ffcc00' : '#ffffff';
-            ctx.fillRect(0, 0, 256, 256);
-            ctx.strokeStyle = isWarning ? '#000000' : '#ff0000';
-            ctx.lineWidth = 15;
-            ctx.strokeRect(10, 10, 236, 236);
-            
-            ctx.fillStyle = '#000000';
-            ctx.font = 'bold 35px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            
-            const lines = text.split('\n');
-            lines.forEach((line, i) => {
-                ctx.fillText(line, 128, 128 - ((lines.length - 1) * 20) + (i * 45));
-            });
-            
-            return new THREE.CanvasTexture(canvas);
-        }
-
         // Matemáticas de la ruta
         function getTrackInfo(z) {
             const zScaled = z * 0.002;
             const x = Math.sin(zScaled) * 120 + Math.sin(zScaled * 0.4) * 60;
             const y = Math.sin(zScaled * 1.5) * 20 + Math.cos(zScaled * 0.7) * 10;
-            
             const dx = Math.cos(zScaled) * 120 * 0.002 + Math.cos(zScaled * 0.4) * 60 * 0.0008;
             const dy = Math.cos(zScaled * 1.5) * 20 * 0.003 - Math.sin(zScaled * 0.7) * 10 * 0.0014;
-            
             const isUnsafe = Math.abs(dx) > 0.15 || dy < -0.025;
             return { x, y, dx, dy, isUnsafe };
         }
 
+        // --- Generadores Procedurales de Decoración ---
+        function createMountain() {
+            const group = new THREE.Group();
+            // Geometría base irregular
+            const baseGeo = new THREE.ConeGeometry(80 + Math.random()*100, 150 + Math.random()*200, 4 + Math.floor(Math.random()*3));
+            baseGeo.rotateY(Math.random() * Math.PI);
+            const matRock = new THREE.MeshLambertMaterial({ color: Math.random() > 0.5 ? 0x2b3e33 : 0x1c2b22 });
+            const peak = new THREE.Mesh(baseGeo, matRock);
+            group.add(peak);
+            
+            // Añadir picos secundarios
+            for(let i=0; i<2; i++) {
+                const subPeak = new THREE.Mesh(baseGeo, matRock);
+                subPeak.scale.set(0.6, 0.6, 0.6);
+                subPeak.position.set((Math.random()-0.5)*100, -50, (Math.random()-0.5)*100);
+                subPeak.rotation.z = (Math.random() - 0.5) * 0.4;
+                group.add(subPeak);
+            }
+            return group;
+        }
+
+        function createTree() {
+            const group = new THREE.Group();
+            const trunkMat = new THREE.MeshLambertMaterial({ color: 0x4a3020 });
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.6, 2), trunkMat);
+            trunk.position.y = 1;
+            trunk.castShadow = true;
+            group.add(trunk);
+
+            const type = Math.floor(Math.random() * 3);
+            let leavesGeo;
+            let yPos = 3.5;
+            if (type === 0) { // Pino
+                leavesGeo = new THREE.ConeGeometry(2.5, 7, 5);
+                yPos = 4.5;
+            } else if (type === 1) { // Roble/Redondo
+                leavesGeo = new THREE.DodecahedronGeometry(3, 1);
+            } else { // Arbustivo
+                leavesGeo = new THREE.IcosahedronGeometry(2.5, 0);
+            }
+
+            const colors = [0x1b4332, 0x2d6a4f, 0x40916c, 0x52b788];
+            const leavesMat = new THREE.MeshLambertMaterial({ color: colors[Math.floor(Math.random() * colors.length)] });
+            const leaves = new THREE.Mesh(leavesGeo, leavesMat);
+            leaves.position.y = yPos;
+            leaves.castShadow = true;
+            group.add(leaves);
+            return group;
+        }
+
+        function createCloud() {
+            const group = new THREE.Group();
+            const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
+            const geo = new THREE.SphereGeometry(1, 12, 12);
+            // Formar cúmulo: base plana, esponjoso arriba
+            const puffs = 6 + Math.floor(Math.random() * 5);
+            for(let j=0; j<puffs; j++) {
+                let p = new THREE.Mesh(geo, cloudMat);
+                let scaleBase = 4 + Math.random()*6;
+                p.scale.set(scaleBase, scaleBase * 0.6, scaleBase); // Aplanado
+                p.position.set((Math.random()-0.5)*15, Math.random()*3, (Math.random()-0.5)*10);
+                group.add(p);
+            }
+            return group;
+        }
+
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87CEEB); 
-            scene.fog = new THREE.Fog(0x87CEEB, 80, 1000); 
+            // Niebla igualando el horizonte para un fundido infinito realista
+            scene.fog = new THREE.Fog(0xffdfb3, 150, 1100); 
 
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1200);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 2000);
             
-            // Renderizador con SOMBRAS ACTIVADAS
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
@@ -176,76 +293,60 @@
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             document.body.appendChild(renderer.domElement);
 
-            // Sistema de Luces Realista
-            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-            
-            sun = new THREE.DirectionalLight(0xffffff, 1.2);
-            sun.position.set(50, 100, 20);
+            // Bóveda Celeste Realista
+            const skyGeo = new THREE.SphereGeometry(1500, 32, 16);
+            const skyMat = new THREE.MeshBasicMaterial({ map: createSkyTexture(), side: THREE.BackSide, fog: false });
+            skySphere = new THREE.Mesh(skyGeo, skyMat);
+            scene.add(skySphere);
+
+            // Sistema de Luces
+            scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+            sun = new THREE.DirectionalLight(0xffeedd, 1.4);
+            sun.position.set(200, 300, 100);
             sun.castShadow = true;
-            sun.shadow.mapSize.width = 1024;
-            sun.shadow.mapSize.height = 1024;
+            sun.shadow.mapSize.width = 2048; // Alta res
+            sun.shadow.mapSize.height = 2048;
             sun.shadow.camera.near = 10;
-            sun.shadow.camera.far = 300;
-            sun.shadow.camera.left = -60;
-            sun.shadow.camera.right = 60;
-            sun.shadow.camera.top = 60;
-            sun.shadow.camera.bottom = -100;
+            sun.shadow.camera.far = 600;
+            sun.shadow.camera.left = -100; sun.shadow.camera.right = 100;
+            sun.shadow.camera.top = 100; sun.shadow.camera.bottom = -100;
             scene.add(sun);
             scene.add(sun.target);
 
             // Nubes
-            const cloudGeo = new THREE.SphereGeometry(1, 8, 8);
-            const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
-            for(let i=0; i<15; i++) {
-                let cGroup = new THREE.Group();
-                for(let j=0; j<5; j++) {
-                    let p = new THREE.Mesh(cloudGeo, cloudMat);
-                    p.position.set((Math.random()-0.5)*5, (Math.random()-0.5)*2, (Math.random()-0.5)*5);
-                    p.scale.setScalar(Math.random() * 4 + 2);
-                    cGroup.add(p);
-                }
-                cGroup.position.set((Math.random()-0.5)*800, 80 + Math.random()*50, -Math.random()*1000);
-                scene.add(cGroup);
-                clouds.push(cGroup);
+            for(let i=0; i<20; i++) {
+                let c = createCloud();
+                c.position.set((Math.random()-0.5)*1200, 150 + Math.random()*100, -Math.random()*2000);
+                scene.add(c);
+                clouds.push(c);
             }
 
-            // Generar Montañas 3D lejanas reales
-            const mountGeo = new THREE.ConeGeometry(150, 300, 5);
-            const mountMat = new THREE.MeshLambertMaterial({ color: 0x2b5e43 });
-            const mountMat2 = new THREE.MeshLambertMaterial({ color: 0x1f4732 });
-            for(let i=0; i<30; i++) {
-                let m = new THREE.Mesh(mountGeo, Math.random() > 0.5 ? mountMat : mountMat2);
+            // Montañas 
+            for(let i=0; i<40; i++) {
+                let m = createMountain();
                 m.userData = {
-                    logicalZ: -Math.random() * 4000,
-                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (200 + Math.random() * 400)
+                    logicalZ: -Math.random() * 5000,
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (250 + Math.random() * 500)
                 };
-                m.rotation.y = Math.random() * Math.PI;
                 scene.add(m);
                 mountains.push(m);
             }
 
-            // Mallas Dinámicas: Asfalto y Pasto (Aceptan sombras)
+            // Mallas Terreno
             roadGeo = new THREE.PlaneGeometry(16, 1100, 1, 100);
-            grassGeo = new THREE.PlaneGeometry(1400, 1100, 1, 100);
+            grassGeo = new THREE.PlaneGeometry(2000, 1100, 1, 100);
             sideLineGeoL = new THREE.PlaneGeometry(0.4, 1100, 1, 100);
             sideLineGeoR = new THREE.PlaneGeometry(0.4, 1100, 1, 100);
 
-            const road = new THREE.Mesh(roadGeo, matAsphalt);
-            road.receiveShadow = true;
-            const grass = new THREE.Mesh(grassGeo, matGrass);
-            grass.receiveShadow = true;
-            
+            const road = new THREE.Mesh(roadGeo, matAsphalt); road.receiveShadow = true;
+            const grass = new THREE.Mesh(grassGeo, matGrass); grass.receiveShadow = true;
             const sideL = new THREE.Mesh(sideLineGeoL, matDashedWhite);
             const sideR = new THREE.Mesh(sideLineGeoR, matDashedWhite);
 
-            scene.add(grass);
-            scene.add(road);
-            scene.add(sideL);
-            scene.add(sideR);
+            scene.add(grass); scene.add(road); scene.add(sideL); scene.add(sideR);
 
-            // Líneas centrales dinámicas
-            const lineGeom = new THREE.PlaneGeometry(0.5, 5);
-            lineGeom.rotateX(-Math.PI / 2);
+            // Líneas centrales
+            const lineGeom = new THREE.PlaneGeometry(0.5, 5); lineGeom.rotateX(-Math.PI / 2);
             for (let i = 0; i < 80; i++) {
                 let line = new THREE.Mesh(lineGeom, matDashedWhite);
                 line.userData = { id: i }; 
@@ -253,30 +354,24 @@
                 scene.add(line);
             }
 
-            // Postes reflectivos 
+            // Postes
             const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 1.2);
             const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
             const postTopMat = new THREE.MeshBasicMaterial({ color: 0xff0000 }); 
-            
             let basePost = new THREE.Group();
-            let pBody = new THREE.Mesh(postGeo, postMat);
-            pBody.castShadow = true;
+            let pBody = new THREE.Mesh(postGeo, postMat); pBody.castShadow = true;
             basePost.add(pBody);
             let topL = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.3), postTopMat);
-            topL.position.y = 0.5;
-            basePost.add(topL);
+            topL.position.y = 0.5; basePost.add(topL);
 
             for (let i = 0; i < 50; i++) {
-                let pL = basePost.clone();
-                let pR = basePost.clone();
-                pL.userData = { id: i }; 
-                pR.userData = { id: i };
+                let pL = basePost.clone(); let pR = basePost.clone();
+                pL.userData = { id: i }; pR.userData = { id: i };
                 posts.push({ left: pL, right: pR });
-                scene.add(pL);
-                scene.add(pR);
+                scene.add(pL); scene.add(pR);
             }
 
-            // Señales de Tránsito
+            // Señales
             const signGeo = new THREE.PlaneGeometry(3.5, 3.5);
             const poleGeo = new THREE.CylinderGeometry(0.1, 0.1, 4);
             const poleMat = new THREE.MeshStandardMaterial({color: 0x555555});
@@ -284,62 +379,57 @@
                 let signGroup = new THREE.Group();
                 let tex = createSignTexture("MAX\n90", false);
                 let signMesh = new THREE.Mesh(signGeo, new THREE.MeshBasicMaterial({ map: tex }));
-                signMesh.position.y = 3.5;
-                signGroup.add(signMesh);
+                signMesh.position.y = 3.5; signGroup.add(signMesh);
                 let pole = new THREE.Mesh(poleGeo, poleMat);
-                pole.position.y = 1.5;
-                pole.castShadow = true;
-                signGroup.add(pole);
+                pole.position.y = 1.5; pole.castShadow = true; signGroup.add(pole);
                 signGroup.userData = { logicalZ: -300 - (i * 400), mesh: signMesh };
                 signs.push(signGroup);
                 scene.add(signGroup);
             }
 
-            // Colectivo del Jugador
+            // Colectivo Jugador
             car = new THREE.Group();
-            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.8, 8), new THREE.MeshLambertMaterial({ color: 0xeeeeee }));
-            busBody.position.y = 2.1;
-            busBody.castShadow = true;
-            car.add(busBody);
+            const busBodyMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.3, metalness: 0.2 });
+            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.8, 8), busBodyMat);
+            busBody.position.y = 2.1; busBody.castShadow = true; car.add(busBody);
             
-            const busStripe = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.5, 8.01), new THREE.MeshLambertMaterial({ color: 0x1d4ed8 }));
-            busStripe.position.y = 1.7;
-            car.add(busStripe);
+            const busStripe = new THREE.Mesh(new THREE.BoxGeometry(2.45, 0.5, 8.01), new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.4 }));
+            busStripe.position.y = 1.7; car.add(busStripe);
             
-            const busGlass = new THREE.Mesh(new THREE.BoxGeometry(2.42, 1.2, 7.8), new THREE.MeshLambertMaterial({ color: 0x111111 }));
-            busGlass.position.y = 3.0;
-            car.add(busGlass);
+            const busGlass = new THREE.Mesh(new THREE.BoxGeometry(2.42, 1.2, 7.8), matGlass);
+            busGlass.position.y = 3.0; car.add(busGlass);
+
+            // Faros Bus
+            const lightG = new THREE.BoxGeometry(0.4, 0.3, 0.1);
+            const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const tlMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            let hl1 = new THREE.Mesh(lightG, hlMat); hl1.position.set(-0.8, 1.0, -4.01); car.add(hl1);
+            let hl2 = new THREE.Mesh(lightG, hlMat); hl2.position.set(0.8, 1.0, -4.01); car.add(hl2);
+            let tl1 = new THREE.Mesh(lightG, tlMat); tl1.position.set(-0.8, 1.0, 4.01); car.add(tl1);
+            let tl2 = new THREE.Mesh(lightG, tlMat); tl2.position.set(0.8, 1.0, 4.01); car.add(tl2);
             
             // Ruedas Colectivo
-            const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.5, 16);
-            wheelGeo.rotateZ(Math.PI / 2);
+            const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.5, 16); wheelGeo.rotateZ(Math.PI / 2);
+            const hubGeo = new THREE.BoxGeometry(0.55, 0.6, 0.2);
+            const hubMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.8 });
             const busOffsets = [[-1.2, -2.5], [1.2, -2.5], [-1.2, 2.5], [1.2, 2.5], [-1.2, 3.5], [1.2, 3.5]];
             busOffsets.forEach(off => {
-                let w = new THREE.Mesh(wheelGeo, matTire);
-                w.position.set(off[0], 0.5, off[1]);
-                w.castShadow = true;
-                car.add(w);
+                let wGroup = new THREE.Group();
+                let w = new THREE.Mesh(wheelGeo, matTire); w.castShadow = true;
+                let hub = new THREE.Mesh(hubGeo, hubMat);
+                if(off[0] > 0) hub.position.x = 0.05; else hub.position.x = -0.05;
+                wGroup.add(w); wGroup.add(hub);
+                wGroup.position.set(off[0], 0.5, off[1]);
+                car.add(wGroup); myWheels.push(wGroup); 
             });
             scene.add(car);
 
-            // Árboles
-            const trunkGeo = new THREE.CylinderGeometry(0.3, 0.5, 2);
-            const leavesGeo = new THREE.ConeGeometry(2.5, 6, 7);
-            const matTrunk = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
-            const matLeaves = new THREE.MeshLambertMaterial({ color: 0x1b4332 });
-            for(let i=0; i<40; i++) {
-                let tree = new THREE.Group();
-                let trunk = new THREE.Mesh(trunkGeo, matTrunk);
-                trunk.position.y = 1;
-                trunk.castShadow = true;
-                let leaves = new THREE.Mesh(leavesGeo, matLeaves);
-                leaves.position.y = 4;
-                leaves.castShadow = true;
-                tree.add(trunk);
-                tree.add(leaves);
+            // Vegetación
+            for(let i=0; i<80; i++) {
+                let tree = createTree();
                 tree.userData = {
-                    logicalZ: -Math.random() * 1000,
-                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (14 + Math.random() * 30)
+                    logicalZ: -Math.random() * 1200,
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (14 + Math.random() * 80)
                 };
                 scene.add(tree);
                 trees.push(tree);
@@ -352,21 +442,15 @@
             const matCowBlack = new THREE.MeshLambertMaterial({color: 0x222222});
             for(let i=0; i<15; i++) {
                 let cow = new THREE.Group();
-                let body = new THREE.Mesh(cowBodyGeo, matCowWhite);
-                body.position.y = 0.8;
-                body.castShadow = true;
-                let spot = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.8, 1.2), matCowBlack);
-                spot.position.set(0, 0.8, 0.2);
-                let head = new THREE.Mesh(cowHeadGeo, matCowWhite);
-                head.position.set(0, 1.4, -1.3);
-                head.castShadow = true;
+                let body = new THREE.Mesh(cowBodyGeo, matCowWhite); body.position.y = 0.8; body.castShadow = true;
+                let spot = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.8, 1.2), matCowBlack); spot.position.set(0, 0.8, 0.2);
+                let head = new THREE.Mesh(cowHeadGeo, matCowWhite); head.position.set(0, 1.4, -1.3); head.castShadow = true;
                 cow.add(body); cow.add(spot); cow.add(head);
                 cow.userData = {
                     logicalZ: -Math.random() * 1000,
-                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (20 + Math.random() * 25)
+                    logicalX: (Math.random() > 0.5 ? 1 : -1) * (20 + Math.random() * 40)
                 };
-                scene.add(cow);
-                cows.push(cow);
+                scene.add(cow); cows.push(cow);
             }
 
             checkHTTPS();
@@ -375,55 +459,57 @@
 
         function createTrafficCar(lane, zOffset) {
             const group = new THREE.Group();
-            const colors = [0xff0000, 0x0000ff, 0xc0c0c0, 0x00ff00, 0xffffff];
+            const colors = [0x990000, 0x002288, 0x888888, 0x226622, 0xffffff, 0xcca800, 0x222222];
             const color = colors[Math.floor(Math.random() * colors.length)];
             
-            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 4), new THREE.MeshLambertMaterial({ color: color }));
-            body.position.y = 0.8;
-            body.castShadow = true;
-            group.add(body);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.2, metalness: 0.6 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.0, 4), bodyMat);
+            body.position.y = 0.8; body.castShadow = true; group.add(body);
 
-            // Ruedas Auto
-            const wGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 16);
-            wGeo.rotateZ(Math.PI / 2);
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.7, 2.2), matGlass);
+            cabin.position.set(0, 1.6, -0.2); cabin.castShadow = true; group.add(cabin);
+
+            const wGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 16); wGeo.rotateZ(Math.PI / 2);
+            const hubGeo = new THREE.BoxGeometry(0.4, 0.4, 0.1);
+            const hubMat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+
+            let carWheels = [];
             const offsets = [[-0.9, -1.2], [0.9, -1.2], [-0.9, 1.2], [0.9, 1.2]];
             offsets.forEach(off => {
-                let w = new THREE.Mesh(wGeo, matTire);
-                w.position.set(off[0], 0.35, off[1]);
-                w.castShadow = true;
-                group.add(w);
+                let wGroup = new THREE.Group();
+                let w = new THREE.Mesh(wGeo, matTire); w.castShadow = true;
+                let hub = new THREE.Mesh(hubGeo, hubMat);
+                if(off[0] > 0) hub.position.x = 0.15; else hub.position.x = -0.15;
+                wGroup.add(w); wGroup.add(hub);
+                wGroup.position.set(off[0], 0.35, off[1]);
+                group.add(wGroup); carWheels.push(wGroup);
             });
 
-            const lightGeo = new THREE.BoxGeometry(1.6, 0.2, 0.2);
+            const lightGeo = new THREE.BoxGeometry(1.6, 0.2, 0.1);
             let lightMat;
             if (lane === 1) { 
                 lightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
                 const light = new THREE.Mesh(lightGeo, lightMat);
-                light.position.set(0, 0.8, 1.95); 
-                group.add(light);
+                light.position.set(0, 0.8, 1.96); group.add(light);
             } else { 
                 lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
                 const light = new THREE.Mesh(lightGeo, lightMat);
-                light.position.set(0, 0.8, 1.95); 
-                group.add(light);
+                light.position.set(0, 0.8, -1.96); group.add(light);
             }
 
             group.userData = {
-                logicalZ: playerLogicalZ - zOffset,
-                lane: lane,
-                speed: lane === 1 ? 40 : -70,
-                overtaken: false
+                logicalZ: playerLogicalZ - zOffset, lane: lane,
+                speed: lane === 1 ? 50 + Math.random()*20 : -80 - Math.random()*20,
+                overtaken: false, wheels: carWheels
             };
-            scene.add(group);
-            traffic.push(group);
+            scene.add(group); traffic.push(group);
         }
 
         function spawnTrafficInitial() {
-            createTrafficCar(1, 150);
-            createTrafficCar(1, 350);
-            createTrafficCar(1, 600);
-            createTrafficCar(-1, 800);
-            createTrafficCar(-1, 1200);
+            createTrafficCar(1, 150); createTrafficCar(1, 350); createTrafficCar(1, 550);
+            createTrafficCar(1, 800); createTrafficCar(1, 1100); createTrafficCar(1, 1400);
+            createTrafficCar(-1, 400); createTrafficCar(-1, 700); createTrafficCar(-1, 1000);
+            createTrafficCar(-1, 1250); createTrafficCar(-1, 1600); createTrafficCar(-1, 1900);
         }
 
         function showFeedback(text, isError) {
@@ -438,7 +524,6 @@
             document.getElementById('loading-view').style.display = 'block';
             window.addEventListener('deviceorientation', updateSensors, true);
             window.addEventListener('deviceorientationabsolute', updateSensors, true);
-
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try { await DeviceOrientationEvent.requestPermission(); } catch (e) { }
             }
@@ -456,50 +541,34 @@
             if (event.beta === null && event.gamma === null) return;
             sensorActive = true;
             document.getElementById('sensor-status').innerText = "Sensor ACTIVO";
-            sensorData.alpha = event.alpha || 0;
-            sensorData.beta = event.beta || 0;
-            sensorData.gamma = event.gamma || 0;
+            sensorData.alpha = event.alpha || 0; sensorData.beta = event.beta || 0; sensorData.gamma = event.gamma || 0;
         }
 
         function initTouchEvents() {
-            const left = document.getElementById('touch-left');
-            const right = document.getElementById('touch-right');
-            const startLeft = () => touchSteer = -1;
-            const startRight = () => touchSteer = 1;
-            const stop = () => touchSteer = 0;
-            left.ontouchstart = startLeft; left.ontouchend = stop;
-            right.ontouchstart = startRight; right.ontouchend = stop;
-            left.onmousedown = startLeft; left.onmouseup = stop;
-            right.onmousedown = startRight; right.onmouseup = stop;
+            const left = document.getElementById('touch-left'); const right = document.getElementById('touch-right');
+            const startLeft = () => touchSteer = -1; const startRight = () => touchSteer = 1; const stop = () => touchSteer = 0;
+            left.ontouchstart = startLeft; left.ontouchend = stop; right.ontouchstart = startRight; right.ontouchend = stop;
+            left.onmousedown = startLeft; left.onmouseup = stop; right.onmousedown = startRight; right.onmouseup = stop;
         }
 
         function startGame() {
-            gameActive = true;
-            document.getElementById('overlay').style.display = 'none';
-            clock = new THREE.Clock();
-            spawnTrafficInitial();
+            gameActive = true; document.getElementById('overlay').style.display = 'none';
+            clock = new THREE.Clock(); spawnTrafficInitial();
         }
 
-        // SOLUCIÓN AL ABISMO (Z FIX): Dibuja desde +80m (atrás tuyo) hasta -1000m (adelante)
         function updateGeometryVertices(geo, width, offsetX = 0) {
             const pos = geo.attributes.position;
             for (let i = 0; i <= 100; i++) {
-                // VisualZ comienza en +80 y baja hasta -1020 garantizando que cubre la zona de la cámara
                 let visualZ = 80 - ((100 - i) / 100) * 1100;
                 let logicalZ = playerLogicalZ + visualZ;
                 let info = getTrackInfo(logicalZ);
-                
-                let idxLeft = i * 2;
-                let idxRight = i * 2 + 1;
-                
+                let idxLeft = i * 2; let idxRight = i * 2 + 1;
                 let yOffset = offsetX === 0 ? 0 : 0.02;
                 if(width > 100) yOffset = -0.1; 
-                
                 pos.setXYZ(idxLeft, offsetX - (width/2) + info.x, info.y + yOffset, visualZ);
                 pos.setXYZ(idxRight, offsetX + (width/2) + info.x, info.y + yOffset, visualZ);
             }
-            pos.needsUpdate = true;
-            geo.computeVertexNormals(); 
+            pos.needsUpdate = true; geo.computeVertexNormals(); 
         }
 
         function animate() {
@@ -510,11 +579,7 @@
             
             // --- Dirección ---
             let targetLaneX = 3.5; 
-            if (sensorActive) {
-                targetLaneX = (sensorData.gamma / 30) * 5; 
-            } else {
-                targetLaneX = touchSteer * 4.5;
-            }
+            if (sensorActive) targetLaneX = (sensorData.gamma / 30) * 5; else targetLaneX = touchSteer * 4.5;
             playerLogicalX += (targetLaneX - playerLogicalX) * delta * 3;
             playerLogicalX = Math.max(-4.5, Math.min(4.5, playerLogicalX));
 
@@ -526,43 +591,47 @@
                 else if (tilt < 40) targetSpeed = Math.max(0, tilt); 
             }
             speed += (targetSpeed - speed) * delta * 1.5;
-            speed = Math.max(0, Math.min(speed, 110)); 
+            speed = Math.max(0, Math.min(speed, 115)); 
 
-            playerLogicalZ -= (speed / 3.6) * delta * 2; 
+            let speedMS = speed / 3.6; 
+            playerLogicalZ -= speedMS * delta; 
+
+            // Ruedas
+            let wheelRot = (speedMS / 0.5) * delta;
+            myWheels.forEach(w => w.rotation.x -= wheelRot);
 
             let pInfo = getTrackInfo(playerLogicalZ);
             document.getElementById('val-unsafe').innerText = pInfo.isUnsafe ? "SÍ" : "NO";
             document.getElementById('val-unsafe').style.color = pInfo.isUnsafe ? "#ff0000" : "#00ff00";
 
-            // --- Mallas Continuas (Reparadas) ---
+            // --- Geometría Terreno ---
             updateGeometryVertices(roadGeo, 16, 0); 
-            updateGeometryVertices(grassGeo, 1400, 0); 
+            updateGeometryVertices(grassGeo, 2000, 0); 
             updateGeometryVertices(sideLineGeoL, 0.4, -7.8); 
             updateGeometryVertices(sideLineGeoR, 0.4, 7.8); 
 
+            // --- Bóveda Celeste ---
+            skySphere.position.copy(camera.position);
+
             // --- Nubes ---
             clouds.forEach(c => {
-                c.position.x += delta * 6; // Viento
-                if (c.position.x > 400) c.position.x = -400;
+                c.position.x += delta * 6; c.position.z -= speedMS * delta * 0.1; // Se mueven un poco
+                if (c.position.x > 800) c.position.x = -800;
+                if (c.position.z > camera.position.z + 200) c.position.z -= 2000;
             });
 
-            // --- Montañas Distantes ---
+            // --- Montañas ---
             mountains.forEach(m => {
-                if (m.userData.logicalZ > playerLogicalZ + 200) {
-                    m.userData.logicalZ -= 4000;
-                }
+                if (m.userData.logicalZ > playerLogicalZ + 200) m.userData.logicalZ -= 4000;
                 let info = getTrackInfo(m.userData.logicalZ);
                 let visualZ = m.userData.logicalZ - playerLogicalZ;
                 m.position.set(info.x + m.userData.logicalX, info.y - 20, visualZ);
             });
 
-            // --- Postes y Líneas (Ajustados al nuevo rango Z) ---
+            // --- Postes y Líneas ---
             posts.forEach(p => {
-                // Genera postes desde +80m hasta -670m
                 let visualZ = 80 - p.left.userData.id * 15 + (Math.abs(playerLogicalZ) % 15);
-                let logicalZ = playerLogicalZ + visualZ;
-                let info = getTrackInfo(logicalZ);
-                
+                let logicalZ = playerLogicalZ + visualZ; let info = getTrackInfo(logicalZ);
                 p.left.position.set(info.x - 8.5, info.y + 0.6, visualZ);
                 p.right.position.set(info.x + 8.5, info.y + 0.6, visualZ);
             });
@@ -570,35 +639,23 @@
             centerLines.forEach(line => {
                 let visualZ = 80 - line.userData.id * 12 + (Math.abs(playerLogicalZ) % 12);
                 let logicalZ = playerLogicalZ + visualZ;
-                let info = getTrackInfo(logicalZ);
-                let nextInfo = getTrackInfo(logicalZ - 5);
-                
+                let info = getTrackInfo(logicalZ); let nextInfo = getTrackInfo(logicalZ - 5);
                 line.position.set(info.x, info.y + 0.05, visualZ);
                 line.lookAt(nextInfo.x, nextInfo.y + 0.05, visualZ - 5);
-                
-                if (info.isUnsafe) {
-                    line.material = matDoubleYellow;
-                    line.scale.z = 2.5; 
-                } else {
-                    line.material = matDashedWhite;
-                    line.scale.z = 1.0; 
-                }
+                if (info.isUnsafe) { line.material = matDoubleYellow; line.scale.z = 2.5; } 
+                else { line.material = matDashedWhite; line.scale.z = 1.0; }
             });
 
-            // --- Árboles y Vacas ---
+            // --- Flora y Fauna ---
             trees.forEach(tree => {
-                if (tree.userData.logicalZ > playerLogicalZ + 80) {
-                    tree.userData.logicalZ -= 900 + Math.random() * 200;
-                }
+                if (tree.userData.logicalZ > playerLogicalZ + 80) tree.userData.logicalZ -= 1100 + Math.random() * 200;
                 let info = getTrackInfo(tree.userData.logicalZ);
                 let visualZ = tree.userData.logicalZ - playerLogicalZ;
                 tree.position.set(info.x + tree.userData.logicalX, info.y, visualZ);
             });
 
             cows.forEach(cow => {
-                if (cow.userData.logicalZ > playerLogicalZ + 80) {
-                    cow.userData.logicalZ -= 900 + Math.random() * 200;
-                }
+                if (cow.userData.logicalZ > playerLogicalZ + 80) cow.userData.logicalZ -= 900 + Math.random() * 200;
                 let info = getTrackInfo(cow.userData.logicalZ);
                 let visualZ = cow.userData.logicalZ - playerLogicalZ;
                 cow.position.set(info.x + cow.userData.logicalX, info.y + 0.5, visualZ);
@@ -610,9 +667,7 @@
                 if (sign.userData.logicalZ > playerLogicalZ + 40) {
                     sign.userData.logicalZ -= 1000 + Math.random() * 500;
                     let infoAhead = getTrackInfo(sign.userData.logicalZ - 150);
-                    let isDanger = infoAhead.isUnsafe;
-                    
-                    let tex = createSignTexture(isDanger ? "CURVA\nPELIGROSA" : "MAX\n90", isDanger);
+                    let tex = createSignTexture(infoAhead.isUnsafe ? "CURVA\nPELIGROSA" : "MAX\n90", infoAhead.isUnsafe);
                     sign.userData.mesh.material.map.dispose();
                     sign.userData.mesh.material.map = tex;
                     sign.userData.mesh.material.needsUpdate = true;
@@ -628,42 +683,48 @@
             car.position.set(pInfo.x + playerLogicalX, pInfo.y, 0);
             car.lookAt(nextPInfo.x + playerLogicalX, nextPInfo.y, -5);
 
-            camera.position.set(pInfo.x + playerLogicalX * 0.3, pInfo.y + 6.5, 12);
+            suspensionPhase += speedMS * delta * 0.5;
+            let suspensionY = Math.sin(suspensionPhase) * (speed / 115) * 0.15;
+
+            camera.position.set(pInfo.x + playerLogicalX * 0.3, pInfo.y + 6.5 + suspensionY, 12);
             camera.lookAt(car.position.x, car.position.y + 2, -20);
             camera.rotation.z = -pInfo.dx * 1.0; 
 
-            // Mantener el sol y su zona de sombra atados a la cámara
-            sun.position.x = camera.position.x + 50;
-            sun.position.z = 20;
+            sun.position.x = camera.position.x + 100;
+            sun.position.z = playerLogicalZ > 0 ? 20 : playerLogicalZ + 20; 
             sun.target.position.set(camera.position.x, 0, -40);
             sun.target.updateMatrixWorld();
 
             // --- Tráfico ---
             traffic.forEach(t => {
-                t.userData.logicalZ -= (t.userData.speed / 3.6) * delta * 2;
-                if (t.userData.logicalZ > playerLogicalZ + 100 || t.userData.logicalZ < playerLogicalZ - 1500) {
-                    t.userData.logicalZ = playerLogicalZ - 800 - Math.random() * 600;
+                let tSpeedMS = t.userData.speed / 3.6;
+                t.userData.logicalZ -= tSpeedMS * delta;
+                let tWheelRot = (tSpeedMS / 0.35) * delta;
+                t.userData.wheels.forEach(w => w.rotation.x -= tWheelRot);
+
+                if (t.userData.logicalZ > playerLogicalZ + 100 || t.userData.logicalZ < playerLogicalZ - 2000) {
+                    let minZ = playerLogicalZ - 800;
+                    traffic.forEach(otherT => {
+                        if (otherT !== t && otherT.userData.lane === t.userData.lane && otherT.userData.logicalZ < minZ) minZ = otherT.userData.logicalZ;
+                    });
+                    t.userData.logicalZ = minZ - 150 - Math.random() * 200;
                     t.userData.overtaken = false;
                 }
+                
                 let tInfo = getTrackInfo(t.userData.logicalZ);
                 let tNextInfo = getTrackInfo(t.userData.logicalZ - 5);
                 let visualZ = t.userData.logicalZ - playerLogicalZ;
-                
                 let laneX = t.userData.lane * 3.5;
                 t.position.set(tInfo.x + laneX, tInfo.y, visualZ);
                 
-                if (t.userData.lane === 1) {
-                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ - 5);
-                } else {
-                    t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ + 5); 
-                }
+                if (t.userData.lane === 1) t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ - 5);
+                else t.lookAt(tNextInfo.x + laneX, tNextInfo.y, visualZ + 5); 
 
                 let distZ = Math.abs(t.userData.logicalZ - playerLogicalZ);
                 let distX = Math.abs(laneX - playerLogicalX);
                 
                 if (distZ < 6 && distX < 2.1) {
-                    speed *= 0.3; 
-                    score = Math.max(0, score - 15);
+                    speed *= 0.3; score = Math.max(0, score - 15);
                     showFeedback("¡CHOQUE! -15", true);
                     t.userData.logicalZ = playerLogicalZ + 50; 
                 }
@@ -672,13 +733,8 @@
                     if (playerLogicalZ < t.userData.logicalZ - 4) {
                         t.userData.overtaken = true;
                         if (playerLogicalX < 0) {
-                            if (pInfo.isUnsafe) {
-                                score -= 10;
-                                showFeedback("¡INFRACCIÓN! LÍNEA AMARILLA -10", true);
-                            } else {
-                                score += 20;
-                                showFeedback("¡BUEN ADELANTAMIENTO! +20", false);
-                            }
+                            if (pInfo.isUnsafe) { score -= 10; showFeedback("¡INFRACCIÓN! LÍNEA AMARILLA -10", true); } 
+                            else { score += 20; showFeedback("¡BUEN ADELANTAMIENTO! +20", false); }
                         }
                     }
                 }
